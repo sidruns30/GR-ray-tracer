@@ -1,51 +1,37 @@
 cmake_minimum_required(VERSION 3.16)
-project(gr-ray-trace LANGUAGES CXX)
 
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+project(GR-ray-tracer
+    VERSION 0.1.0
+    DESCRIPTION "GR ray tracer"
+    LANGUAGES CXX)
 
-# Find required packages
-find_package(MPI REQUIRED)
-find_package(OpenMP REQUIRED)
-find_package(Kokkos REQUIRED)
-
-# cnpy is typically found via find_package or as a subdirectory
-# If cnpy is installed system-wide, you can use find_package
-# Otherwise, you may need to add it as a subdirectory or specify include/lib paths
-# For this example, we assume it's installed or available via pkg-config
-find_library(CNPY_LIBRARY NAMES cnpy)
-find_path(CNPY_INCLUDE_DIR NAMES cnpy.h)
-
-# Create executable
-add_executable(gr-ray-trace main.cpp)
-
-# Link libraries
-target_link_libraries(gr-ray-trace
-    PRIVATE
-        MPI::MPI_CXX
-        OpenMP::OpenMP_CXX
-        Kokkos::kokkos
-)
-
-# If cnpy was found, link it
-if(CNPY_LIBRARY AND CNPY_INCLUDE_DIR)
-    target_include_directories(gr-ray-trace PRIVATE ${CNPY_INCLUDE_DIR})
-    target_link_libraries(gr-ray-trace PRIVATE ${CNPY_LIBRARY})
-    target_link_libraries(gr-ray-trace PRIVATE z)  # cnpy requires zlib
-else()
-    message(WARNING "cnpy library not found. Please install cnpy or specify CNPY_LIBRARY and CNPY_INCLUDE_DIR")
-    # You can uncomment the following lines to specify custom paths
-    # set(CNPY_INCLUDE_DIR "/path/to/cnpy/include")
-    # set(CNPY_LIBRARY "/path/to/cnpy/lib/libcnpy.a")
-    # target_include_directories(gr-ray-trace PRIVATE ${CNPY_INCLUDE_DIR})
-    # target_link_libraries(gr-ray-trace PRIVATE ${CNPY_LIBRARY} z)
+# Defaults
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-# Print build configuration
-message(STATUS "=== Build Configuration ===")
-message(STATUS "MPI Found: ${MPI_FOUND}")
-message(STATUS "OpenMP Found: ${OpenMP_FOUND}")
-message(STATUS "Kokkos Found: ${Kokkos_FOUND}")
-message(STATUS "cnpy Library: ${CNPY_LIBRARY}")
-message(STATUS "cnpy Include: ${CNPY_INCLUDE_DIR}")
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Helpful flags for editor integrations
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Options
+option(BUILD_TESTING "Enable building tests" ON)
+option(ENABLE_WARNINGS "Enable extra compiler warnings" ON)
+
+if(ENABLE_WARNINGS)
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag(-Wall HAS_WALL)
+    if(HAS_WALL)
+        add_compile_options(-Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
+# Add subdirectory containing the project's CMakeLists.txt
+add_subdirectory(src)
+
+# Testing and packaging helpers
+include(CTest)
+include(CPack)

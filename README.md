@@ -2,18 +2,11 @@
 A general relativistic ray-tracing code on GPUs that makes use of the Kokkos Framework.
 
 ## Overview
-This project provides a C++ implementation that leverages:
-- **MPI** for distributed parallel computing
-- **OpenMP** for shared-memory parallelism
-- **Kokkos** for performance portability across different hardware (CPUs, GPUs)
-- **cnpy** for reading/writing NumPy `.npy` files
-
-## Features
-The boilerplate code includes:
-- Main function with proper MPI and Kokkos initialization
-- Function to load NumPy `.npy` files using cnpy
-- Functions to initialize Kokkos arrays (1D and 2D) from host data
-- Example parallel execution with OpenMP and Kokkos
+This project provides a C++ implementation that uses the following libraries:
+- **MPI**
+- **OpenMP**
+- **Kokkos**
+- **cnpy**
 
 ## Dependencies
 - CMake (>= 3.16)
@@ -46,6 +39,21 @@ cd cnpy
 mkdir build && cd build
 cmake .. -DCMAKE_INSTALL_PREFIX=/path/to/install
 make install
+```
+#### mpi (find your MPI installation)
+
+
+
+Option 2 — load the module and use find_package inside CMakeLists (modern CMake):
+```cmake
+# CMakeLists.txt (after project(...))
+find_package(MPI REQUIRED COMPONENTS C CXX)
+if(MPI_FOUND)
+    message(STATUS "MPI include: ${MPI_INCLUDE_PATH}")
+    message(STATUS "MPI libs: ${MPI_LIBRARIES}")
+    # Prefer imported targets when available
+    target_link_libraries(my_target PRIVATE MPI::MPI_C MPI::MPI_CXX)
+endif()
 ```
 
 ### Build gr-ray-trace
