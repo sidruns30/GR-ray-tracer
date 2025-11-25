@@ -4,7 +4,7 @@
 #pragma once
 #include "../utils.hpp"
 #include "../utils.cpp"
-
+#include "../output/display.hpp"
 
 
 // Function to load npy files into Kokkos views
@@ -20,6 +20,7 @@ void load_1d_numpy_array(   const std::string& filename,
     // Check dimensions
     if (arr.shape.size() != 1) 
     {
+        WARN("Expected 1D array in " + filename);
         throw std::runtime_error("Expected 1D array in " + filename);
     }
     
@@ -41,8 +42,8 @@ void load_1d_numpy_array(   const std::string& filename,
     Kokkos::deep_copy(kokkos_array, host_array);
 
     if (verbose ) {
-        std::cout << "Loaded 1D numpy array from " << filename << " with " 
-                  << size << " elements into Kokkos view." << std::endl;
+        INFO("Loaded 1D numpy array from " + filename + " with " 
+                  + std::to_string(size) + " elements.");
     }
 }
 
@@ -56,6 +57,7 @@ void load_2d_numpy_array(   const std::string& filename,
 
     // Check dimensions
     if (arr.shape.size() != 2) {
+        WARN("Expected 2D array in " + filename);
         throw std::runtime_error("Expected 2D array in " + filename);
     }
 
@@ -80,8 +82,8 @@ void load_2d_numpy_array(   const std::string& filename,
     Kokkos::deep_copy(kokkos_array, host_array);
 
     if (verbose ) {
-        std::cout << "Loaded 2D numpy array from " << filename << " with dimensions [" 
-                  << dim0 << ", " << dim1 << "] into Kokkos view." << std::endl;
+        INFO("Loaded 2D numpy array from " + filename + " with dimensions [" 
+                  + std::to_string(dim0) + ", " + std::to_string(dim1) + "].");
     }
 }
 
@@ -95,6 +97,7 @@ void load_3d_numpy_array(   const std::string& filename,
     
     // Check dimensions
     if (arr.shape.size() != 3) {
+        WARN("Expected 3D array in " + filename);
         throw std::runtime_error("Expected 3D array in " + filename);
     }
 
@@ -122,8 +125,8 @@ void load_3d_numpy_array(   const std::string& filename,
     Kokkos::deep_copy(kokkos_array, host_array);
 
     if (verbose ) {
-        std::cout << "Loaded 3D numpy array from " << filename << " with dimensions [" 
-                  << dim0 << ", " << dim1 << ", " << dim2 << "] into Kokkos view." << std::endl;
+        INFO("Loaded 3D numpy array from " + filename + " with dimensions [" 
+                  + std::to_string(dim0) + ", " + std::to_string(dim1) + ", " + std::to_string(dim2) + "].");
     }
 }
 
@@ -137,6 +140,7 @@ void load_4d_numpy_array(   const std::string& filename,
 
     // Check dimensions
     if (arr.shape.size() != 4) {
+        WARN("Expected 4D array in " + filename);
         throw std::runtime_error("Expected 4D array in " + filename);
     }
 
@@ -167,9 +171,10 @@ void load_4d_numpy_array(   const std::string& filename,
     Kokkos::deep_copy(kokkos_array, host_array);
 
     if (verbose ) {
-        std::cout << "Loaded 4D numpy array from " << filename << " with dimensions [" 
-                  << dim0 << ", " << dim1 << ", " << dim2 << ", " << dim3 << "] into Kokkos view." << std::endl;
-    }
+        INFO("Loaded 4D numpy array from " + filename + " with dimensions [" 
+                  + std::to_string(dim0) + ", " + std::to_string(dim1) + ", " 
+                  + std::to_string(dim2) + ", " + std::to_string(dim3) + "].");
+     }
 }
 
 template<typename T>
@@ -181,6 +186,7 @@ void load_coordinate_array(const std::string coord_type,
     // Check dimensions
     if (arr.shape.size() != 1) 
     {
+        WARN("Expected 1D array in " + filename);
         throw std::runtime_error("Expected 1D array in " + filename);
     }
     
@@ -201,8 +207,8 @@ void load_coordinate_array(const std::string coord_type,
     Kokkos::deep_copy(kokkos_array, host_array);
 
     if (verbose ) {
-        std::cout << "Loaded coordinate array for " << coord_type << " from " << filename << std::endl;
-        std::cout << "Array size: " << size << std::endl;
+        INFO("Loaded coordinate array for " + coord_type + " from " + filename + 
+                  " with " + std::to_string(size) + " elements.");
     }
     if (coord_type == "r") {
         r_min = host_array(0);
@@ -211,12 +217,10 @@ void load_coordinate_array(const std::string coord_type,
         dlog_r = log(host_array(1)/host_array(0));
         // Check uniform spacing in log-space
         for (size_t i = 1; i < size - 1; ++i) {
-            double dlogr_i = log(host_array(i+1)/host_array(i));
+            real dlogr_i = log(host_array(i+1)/host_array(i));
             if (fabs(dlogr_i - dlog_r) > 1e-2) {
+                WARN("r coordinate array is not uniformly spaced in log-space.");
                 throw std::runtime_error("r coordinate array is not uniformly spaced in log-space.");
-            }
-            if (verbose ) {
-                std::cout << host_array(i) << " ";
             }
         }
         std::cout << std::endl;
@@ -226,14 +230,12 @@ void load_coordinate_array(const std::string coord_type,
         theta_max = host_array(size - 1);
         ntheta = size;
         // Check uniform spacing
-        double dtheta = host_array(1) - host_array(0);
+        real dtheta = host_array(1) - host_array(0);
         for (size_t i = 1; i < size - 1; ++i) {
-            double dtheta_i = host_array(i+1) - host_array(i);
+            real dtheta_i = host_array(i+1) - host_array(i);
             if (fabs(dtheta_i - dtheta) > 1e-2) {
+                WARN("theta coordinate array is not uniformly spaced.");
                 throw std::runtime_error("theta coordinate array is not uniformly spaced.");
-            }
-            if (verbose ) {
-                std::cout << host_array(i) << " ";
             }
         }
         std::cout << std::endl;
@@ -243,14 +245,12 @@ void load_coordinate_array(const std::string coord_type,
         phi_max = host_array(size - 1);
         nphi = size;
         // Check uniform spacing
-        double dphi = host_array(1) - host_array(0);
+        real dphi = host_array(1) - host_array(0);
         for (size_t i = 1; i < size - 1; ++i) {
-            double dphi_i = host_array(i+1) - host_array(i);
+            real dphi_i = host_array(i+1) - host_array(i);
             if (fabs(dphi_i - dphi) > 1e-2) {
+                WARN("phi coordinate array is not uniformly spaced.");
                 throw std::runtime_error("phi coordinate array is not uniformly spaced.");
-            }
-            if (verbose ) {
-                std::cout << host_array(i) << " ";
             }
         }
         std::cout << std::endl;
@@ -261,28 +261,28 @@ void load_coordinate_array(const std::string coord_type,
 // Load all the arrays needed for HAMR simulation
 // (This function can be expanded as needed to load specific arrays)
 void load_hamr_numpy_arrays(const std::string& base_path, 
-                            Kokkos::View<double*>& r,
-                            Kokkos::View<double*>& theta,
-                            Kokkos::View<double*>& phi, 
-                            Kokkos::View<double***>& rho,
-                            Kokkos::View<double***>& bsqr,
-                            Kokkos::View<double***>& pgas,
-                            Kokkos::View<double***>& Tgas,
-                            Kokkos::View<double***>& ug,
-                            Kokkos::View<double****>& bu,
-                            Kokkos::View<double****>& uu) {
-    load_coordinate_array<double>("r", base_path + "r.npy", r);
-    load_coordinate_array<double>("theta", base_path + "theta.npy", theta);
-    load_coordinate_array<double>("phi", base_path + "phi.npy", phi);
-    load_3d_numpy_array<double>(base_path + "rho.npy", rho);
-    load_3d_numpy_array<double>(base_path + "bsq.npy", bsqr);
-    load_3d_numpy_array<double>(base_path + "pgas.npy", pgas);
-    load_3d_numpy_array<double>(base_path + "Tgas.npy", Tgas);
-    load_3d_numpy_array<double>(base_path + "ug.npy", ug);
-    load_4d_numpy_array<double>(base_path + "bu.npy", bu);
-    load_4d_numpy_array<double>(base_path + "uu.npy", uu);
+                            Kokkos::View<real*>& r,
+                            Kokkos::View<real*>& theta,
+                            Kokkos::View<real*>& phi, 
+                            Kokkos::View<real***>& rho,
+                            Kokkos::View<real***>& bsqr,
+                            Kokkos::View<real***>& pgas,
+                            Kokkos::View<real***>& Tgas,
+                            Kokkos::View<real***>& ug,
+                            Kokkos::View<real****>& bu,
+                            Kokkos::View<real****>& uu) {
+    load_coordinate_array<real>("r", base_path + "r.npy", r);
+    load_coordinate_array<real>("theta", base_path + "theta.npy", theta);
+    load_coordinate_array<real>("phi", base_path + "phi.npy", phi);
+    load_3d_numpy_array<real>(base_path + "rho.npy", rho);
+    load_3d_numpy_array<real>(base_path + "bsq.npy", bsqr);
+    load_3d_numpy_array<real>(base_path + "pgas.npy", pgas);
+    load_3d_numpy_array<real>(base_path + "Tgas.npy", Tgas);
+    load_3d_numpy_array<real>(base_path + "ug.npy", ug);
+    load_4d_numpy_array<real>(base_path + "bu.npy", bu);
+    load_4d_numpy_array<real>(base_path + "uu.npy", uu);
     if (verbose) {
-        std::cout << "All HAMR numpy arrays loaded from base path: " << base_path << std::endl;
+        INFO("All HAMR numpy arrays loaded from base path: " + base_path);
     }
     return;
 }

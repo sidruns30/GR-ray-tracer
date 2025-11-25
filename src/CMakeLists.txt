@@ -36,8 +36,9 @@ if(CNPY_LIBRARY AND CNPY_INCLUDE_DIR)
     target_sources(gr-ray-trace PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/utils.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/input/load_python_arrays.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/geodesic_integrate/cartesian_kerr_schild.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/geodesic_integrate/integrate_cart_ks.hpp
         ${CMAKE_CURRENT_SOURCE_DIR}/radiative_transfer/initialize_photons.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/metrics/cartesian_kerr_schild.hpp
     )
     target_link_libraries(gr-ray-trace PRIVATE ${CNPY_LIBRARY})
     target_link_libraries(gr-ray-trace PRIVATE z)  # cnpy requires zlib

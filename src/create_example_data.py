@@ -26,7 +26,7 @@ def give_hamr_array_shapes():
         # print keys in data
         for key in arr.keys():
             print(f"  {key}: shape = {arr[key].shape}, dtype = {arr[key].dtype}")
-            # Change dtype to float64 and save as .npy
+            # Change dtype to float32 and save as .npy
             new_arr = arr[key].astype(np.float64)
             # if key contains 'r', 'theta', or 'phi', save as 1D array
             if key == 'r':
@@ -73,64 +73,105 @@ def create_example_data():
     print("\nTo use these files with the C++ code, uncomment the relevant")
     print("sections in main.cpp and rebuild the application.")
 
-def load_photon_output_data():
+def plot_photon_trajectories():
     output_dir = '/home/siddhant/scratch/GR-ray-tracer/output/'
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
-
-    x, y, z, weights = [], [], [], []
-    nphotons = 0
-    for step in range(1, 1000, 1):
-        file_path = f"{output_dir}photons_step_{step:d}.npy"
-        data = np.load(file_path)
-        print(f"Loaded {file_path} with shape {data.shape} and dtype {data.dtype}")
-        x.append(data[:, 1])
-        y.append(data[:, 2])
-        z.append(data[:, 3])
-        weights.append(data[:, -1])
-        if step == 1: nphotons = data.shape[0]
-    x = np.concatenate(x)
-    y = np.concatenate(y)
-    z = np.concatenate(z)
-    weights = np.concatenate(weights)
-
-    # Add sphere for black hole
-    u = np.linspace(0, 2 * np.pi, 100)
-    v = np.linspace(0, np.pi, 100)
-    r = 2.0  # Radius of the black hole
-    xs = r * np.outer(np.cos(u), np.sin(v))
-    ys = r * np.outer(np.sin(u), np.sin(v))
-    zs = r * np.outer(np.ones(np.size(u)), np.cos(v))
-    ax.plot_surface(xs, ys, zs, color='r', alpha=0.9)
-    for i in range(10):
-        i_rand = np.random.randint(0, nphotons)
-        ax.plot(x[i_rand::nphotons], y[i_rand::nphotons], z[i_rand::nphotons], alpha=0.3)
     
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    ax.set_xlim([-8, 8])
-    ax.set_ylim([-8, 8])
-    ax.set_zlim([-8, 8])
-    ax2 = fig.add_subplot(111)
-    ax2.hist(weights, bins=50, log=True)
-    ax2.set_xlabel("Photon Weights")
-    ax2.set_ylabel("Count")
-    plt.savefig("photon_trajectories.png")
+    # ----------------------------
+    # Load Photon Data
+    # ----------------------------
+    xs, ys, zs, ws = [], [], [], []
+    for step in range(0, 700, 2):
+        f = f"{output_dir}photon_output_{step}_rank0.npz"
+        data = np.load(f)
+        xs.append(data["x1"])
+        ys.append(data["x2"])
+        zs.append(data["x3"])
+        ws.append(data["I"])
+
+    x = np.concatenate(xs)
+    y = np.concatenate(ys)
+    z = np.concatenate(zs)
+    w = np.concatenate(ws)
+
+    # ----------------------------
+    # Configure Figure
+    # ----------------------------
+    plt.style.use("dark_background")
+
+    fig = plt.figure(figsize=(11, 9))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.grid(False)
+    
+    # Make background fully black
+    ax.set_facecolor("black")
+    fig.patch.set_facecolor("black")
+
+    # ----------------------------
+    # Black Hole Sphere
+    # ----------------------------
+    r_bh = 2.0
+    u = np.linspace(0, 2*np.pi, 100)
+    v = np.linspace(0, np.pi, 100)
+    xsph = r_bh * np.outer(np.cos(u), np.sin(v))
+    ysph = r_bh * np.outer(np.sin(u), np.sin(v))
+    zsph = r_bh * np.outer(np.ones_like(u), np.cos(v))
+
+    ax.plot_surface(
+        xsph, ysph, zsph,
+        rstride=2, cstride=2,
+        color="gray",
+        edgecolor="none",
+        alpha=0.35,   # matte black-hole shading
+        antialiased=True,
+    )
+
+    # ----------------------------
+    # Photon Trajectories
+    # ----------------------------
+    # Pick a subset for clarity
+    stride = 20
+    for i in range(stride):
+        ax.plot(
+            x[i::stride], y[i::stride], z[i::stride],
+            lw=1.0,
+            alpha=0.8,
+            color=plt.cm.jet((i / stride)**0.5, )
+        )
+
+    # ----------------------------
+    # Labels & Bounds
+    # ----------------------------
+    lim = 8
+    ax.set_xlim([-lim, lim])
+    ax.set_ylim([-lim, lim])
+    ax.set_zlim([-lim, lim])
+
+    ax.set_xlabel("X", labelpad=10, fontsize=12, color="white")
+    ax.set_ylabel("Y", labelpad=10, fontsize=12, color="white")
+    ax.set_zlabel("Z", labelpad=10, fontsize=12, color="white")
+
+    # ----------------------------
+    # Camera Angle
+    # ----------------------------
+    elev = 22
+    for azim in (0, 120, 240):
+        ax.view_init(elev=elev, azim=azim)
+        fig.savefig(f"photon_trajectories_phi{azim}.png", dpi=300, bbox_inches="tight")
+    plt.close()
+
 
 def make_photon_image():
     output_dir = '/home/siddhant/scratch/GR-ray-tracer/output/'
     image_width = 200
     image_height = 200
-    
-    for step in [0, 1000]:
-        file_path = f"{output_dir}photons_step_{step:d}.npy"
+    weights_list = []
+    for step in range(0, 9001, 1000):
+        file_path = f"{output_dir}photon_output_{step:d}_rank0.npz"
         data = np.load(file_path)
-        print(f"Loaded {file_path} with shape {data.shape} and dtype {data.dtype}")
         if step == 0:
-            coords_x = data[:, 1]
-            coords_y = data[:, 2]
-            coords_z = data[:, 3]
+            coords_x = data["x1"]
+            coords_y = data["x2"]
+            coords_z = data["x3"]
             x_cen = np.mean(coords_x)
             y_cen = np.mean(coords_y)
             z_cen = np.mean(coords_z)
@@ -144,18 +185,14 @@ def make_photon_image():
             phi_hat_x = -np.sin(phi)
             phi_hat_y = np.cos(phi)
             phi_hat_z = 0.0
-            theta_hat_x = 1
-            theta_hat_y = 0
-            theta_hat_z = 0
-            phi_hat_x = 0
-            phi_hat_y = 1
-            phi_hat_z = 0
-            
+
             image_coords_x = coords_x * theta_hat_x + coords_y * theta_hat_y + coords_z * theta_hat_z
             image_coords_y = coords_x * phi_hat_x + coords_y * phi_hat_y + coords_z * phi_hat_z
-        if step == 1000:
-            weights = data[:, -1]
-    
+        else:
+            weights = data["I"]
+            weights_list.append(weights)
+
+    weights = np.sum(np.array(weights_list), axis=0)
     # Now bin the image coords to create an image
     image = np.zeros((image_height, image_width))
     image_coords_x_array = np.linspace(image_coords_x.min(), image_coords_x.max(), image_width)
@@ -165,8 +202,8 @@ def make_photon_image():
                                           bins=[image_coords_x_array, image_coords_y_array], 
                                           weights=weights, density=False)
 
-    from matplotlib.colors import LogNorm
-    plt.pcolormesh(hist, cmap='inferno', norm=LogNorm(vmin=3e2, vmax=hist.max()))
+    from matplotlib.colors import LogNorm, Normalize
+    plt.pcolormesh(hist, cmap='inferno', norm=Normalize(vmin=3e2, vmax=hist.max()))
     plt.colorbar(label='Photon Weights')
     plt.xlabel('Image X Pixel')
     plt.ylabel('Image Y Pixel')
@@ -177,5 +214,5 @@ def make_photon_image():
 if __name__ == "__main__":
     #create_example_data()
     #give_hamr_array_shapes()
-    #load_photon_output_data()
-    make_photon_image()
+    plot_photon_trajectories()
+    #make_photon_image()

@@ -2,7 +2,8 @@
 #include "utils.cpp"
 #include "input/load_python_arrays.hpp"
 #include "radiative_transfer/initialize_photons.hpp"
-#include "geodesic_integrate/cartesian_kerr_schild.hpp"
+#include "geodesic_integrate/integrate_cart_ks.hpp"
+#include "output/display.hpp"
 
 
 int main(int argc, char* argv[]) {
@@ -13,32 +14,40 @@ int main(int argc, char* argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
     
     if (mpi_rank == 0) {
-        std::cout << "=== GR Ray-Trace Initialization ===" << std::endl;
-        std::cout << "MPI processes: " << mpi_size << std::endl;
+        INIT("=== GR Ray-Trace Initialization ===");
+        INFO("MPI processes: " + std::to_string(mpi_size));
     }
     // Initialize Kokkos
     Kokkos::initialize(argc, argv);
     {
+        Timers timers(max_steps, output_interval);
+
+        timers.AddTimer("Load HAMR Data");
+        timers.BeginTimer("Load HAMR Data");
         // Load the HAMR data from numpy files into Kokkos views
-        Kokkos::View<double*> r, theta, phi;
-        Kokkos::View<double***>  rho, bsqr, pgas, Tgas, ug;
-        Kokkos::View<double****> bu, uu;
+        Kokkos::View<real*> r, theta, phi;
+        Kokkos::View<real***>  rho, bsqr, pgas, Tgas, ug;
+        Kokkos::View<real****> bu, uu;
         std::string base_path = "/home/siddhant/scratch/rayTracingTestData/";
         load_hamr_numpy_arrays(base_path, r, theta, phi, rho, bsqr, pgas, Tgas, ug, bu, uu);
+        timers.EndTimer("Load HAMR Data");
 
         // Initialize camera and pixels
         if (verbose && mpi_rank == 0) {
-            std::cout << "Grid dimensions: nr=" << nr << ", ntheta=" << ntheta << ", nphi=" << nphi << std::endl;
-            std::cout << "r range: [" << r_min << ", " << r_max << "], theta range: [" 
-                      << theta_min << ", " << theta_max << "], phi range: [" 
-                      << phi_min << ", " << phi_max << "]" << std::endl;
+            INFO("Grid dimensions: nr=" + std::to_string(nr) + ", ntheta=" + std::to_string(ntheta) + ", nphi=" + 
+            std::to_string(nphi), Colors::cyan);
+            INFO("r coordinate from " + std::to_string(r_min) + " to " + std::to_string(r_max), Colors::hotpink);
+            INFO("theta coordinate from " + std::to_string(theta_min) + " to " + std::to_string(theta_max), Colors::hotpink);
+            INFO("phi coordinate from " + std::to_string(phi_min) + " to " + std::to_string(phi_max), Colors::hotpink);
         }
         // Initialize a fraction of photons per mpi process for back tracing from camera
         const int photons_per_process = nphotons / mpi_size;
-        Kokkos::View<double**> photons("camera_pixels", photons_per_process, 9);
+        Photons photons(photons_per_process, "photons_");
 
         if (use_pinhole_camera) {
-            InitializePhotonsPinhole(
+            timers.AddTimer("Initialize Pinhole Camera");
+            timers.BeginTimer("Initialize Pinhole Camera");
+            initialize_photons_pinhole(
                 photons_per_process,
                 camera_distance,
                 camera_theta,
@@ -47,10 +56,13 @@ int main(int argc, char* argv[]) {
                 mpi_size,
                 photons
                 );
+            timers.EndTimer("Initialize Pinhole Camera");
             }
 
         else if (use_image_camera) {
-            InitializePhotonsImageCamera(
+            timers.AddTimer("Initialize Image Camera");
+            timers.BeginTimer("Initialize Image Camera");
+            initialize_photons_image_camera(
                 photons_per_process,
                 camera_distance,
                 camera_theta,
@@ -59,16 +71,27 @@ int main(int argc, char* argv[]) {
                 mpi_size,
                 photons
                 );
+            timers.EndTimer("Initialize Image Camera");
         }
 
-        std::cout << "Starting geodesic integration on rank " << mpi_rank << " with " 
-                  << photons_per_process << " photons." << std::endl;
+        else 
+        {
+            timers.AddTimer("Initialize User-Defined Photons");
+            timers.BeginTimer("Initialize User-Defined Photons");
+            initialize_photons_user(
+                photons_per_process,
+                photons
+                );
+            timers.EndTimer("Initialize User-Defined Photons");
+        }
+
+        INFO("=== Starting Geodesic Integration ===", Colors::cyan);
 
         // Integrate geodesics
         integrate_geodesics(
             photons,
-            r, theta, phi, rho, bsqr, pgas, Tgas, bu, uu,
-            dtau, mpi_rank
+            r, theta, phi, rho, Tgas, 
+            mpi_rank, timers
             );
     }
     Kokkos::fence();
