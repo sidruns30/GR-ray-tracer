@@ -19,13 +19,23 @@ Photons Kokkos::View is fixed-size and terminated photons simply stop being
 updated rather than removed -- so per-photon quantities are tracked over time
 by concatenating ranks in sorted order at each step.
 
-Caveat carried over from the C++ side: build_observation_products() (see
-src/radiative_transfer/observation.hpp) bins each rank's photons into image /
-lightcurve / spectrum axes scaled to *that rank's own* local min/max of
-x,y,t,k0. Different ranks therefore generally have different physical axis
-ranges for the same pixel/bin index, so per-rank observation products are NOT
-directly summable pixel-by-pixel -- this script plots them per-rank rather
-than pretending otherwise.
+image_I/Q/U/V (see build_observation_products() in
+src/radiative_transfer/observation.hpp) bin each photon by its FIXED
+camera-screen launch coordinate (theta_disp/phi_disp, set once at init time in
+src/radiative_transfer/initialize_photons.hpp) over a range set by the active
+camera's screen geometry (image-plane camera: +-plane_dim1/2 x +-plane_dim2/2;
+pinhole camera: +-pinhole_aperture_radius square) -- NOT the photon's current,
+time-varying x/y position, and NOT a per-call min/max. So pixel (i, j) means
+the same camera-screen location in every observation_step_* dump, each dump is
+one "photograph" of where photons-per-screen-pixel currently are, and (since
+the range depends only on config, not on the data) image products ARE
+directly comparable/summable across MPI ranks and across steps.
+
+Caveat that still applies: lightcurve_I (binned by coordinate time x0) and
+spectrum_I (binned by k0, an energy-like quantity) are each rescaled to
+*that call's own* local min/max, per rank, per dump -- so those two products
+are NOT directly comparable across ranks or across steps, and this script
+plots them per-rank rather than pretending otherwise.
 
 Usage:
     python3 analyze_output.py post   --output-dir ./output/
@@ -44,6 +54,15 @@ import numpy as np
 # with --mass/--spin if utils.hpp has since changed.
 DEFAULT_M_BH = 1.0
 DEFAULT_A_BH = 1.0
+
+# Camera screen geometry -- must match src/utils.hpp / config TOML (camera.*).
+# Used only to label/extent the image_I/Q/U/V axes; wrong values mislabel the
+# image but don't affect which pixel a photon lands in (that's fixed in the
+# C++ side, see observation.hpp). Override with --plane-dim1/--plane-dim2 for
+# the image-plane camera, or --pinhole-aperture-radius for the pinhole camera.
+DEFAULT_PLANE_DIM1 = 20.0
+DEFAULT_PLANE_DIM2 = 20.0
+DEFAULT_PINHOLE_APERTURE_RADIUS = 50.0
 
 PHOTON_FIELDS = ["x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3", "I", "Q", "U", "V"]
 PHOTON_RE = re.compile(r"photon_output_(\d+)_rank(\d+)_(\w+)\.npy$")
@@ -297,26 +316,41 @@ def cmd_post(args):
     fig.savefig(plots_dir / "radius_histogram.png", dpi=150)
     plt.close(fig)
 
-    # --- Observation products (image / lightcurve / spectrum), last available step, per rank ---
+    # --- Observation images: one camera-screen picture per dump ---
+    # image_I/Q/U/V now bin by each photon's fixed screen coordinate over a
+    # range set purely by camera config (see module docstring), so unlike
+    # lightcurve/spectrum they're safe to sum across ranks into one image.
     obs_steps = discover_observation_steps(output_dir)
     if obs_steps:
+        half1, half2 = (args.plane_dim1 / 2.0, args.plane_dim2 / 2.0) if not args.pinhole \
+            else (args.pinhole_aperture_radius, args.pinhole_aperture_radius)
+        extent = [-half1, half1, -half2, half2]
+
+        images_dir = plots_dir / "observation_images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        for step in sorted(obs_steps):
+            ranks = sorted(obs_steps[step])
+            products = load_observation_step(output_dir, step, ranks)
+
+            fig, axes = plt.subplots(1, 4, figsize=(14, 3.5))
+            for col, field in enumerate(("image_I", "image_Q", "image_U", "image_V")):
+                combined = np.zeros_like(products[ranks[0]][field])
+                for rank in ranks:
+                    combined += products[rank][field]
+                im = axes[col].imshow(combined.T, origin="lower", cmap="inferno", extent=extent)
+                axes[col].set_title(field)
+                axes[col].set_xlabel("screen u")
+                axes[col].set_ylabel("screen v")
+                fig.colorbar(im, ax=axes[col], fraction=0.046)
+            fig.suptitle(f"Observation image at step {step} (summed over {len(ranks)} rank(s))")
+            fig.tight_layout()
+            fig.savefig(images_dir / f"observation_image_step_{step:06d}.png", dpi=150)
+            plt.close(fig)
+        print(f"Wrote {len(obs_steps)} per-dump observation image(s) to {images_dir}")
+
         last_obs_step = max(obs_steps)
         ranks = sorted(obs_steps[last_obs_step])
         products = load_observation_step(output_dir, last_obs_step, ranks)
-
-        fig, axes = plt.subplots(len(ranks), 4, figsize=(14, 3.2 * len(ranks)), squeeze=False)
-        for row, rank in enumerate(ranks):
-            for col, field in enumerate(("image_I", "image_Q", "image_U", "image_V")):
-                ax = axes[row][col]
-                im = ax.imshow(products[rank][field].T, origin="lower", cmap="inferno")
-                ax.set_title(f"rank {rank}: {field}")
-                fig.colorbar(im, ax=ax, fraction=0.046)
-        fig.suptitle(f"Observation images at step {last_obs_step} "
-                     "(per-rank local pixel grids -- not directly comparable/summable, see module docstring)")
-        fig.tight_layout()
-        fig.savefig(plots_dir / "observation_images.png", dpi=150)
-        plt.close(fig)
-
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
         for rank in ranks:
             ax1.plot(products[rank]["lightcurve_I"], label=f"rank {rank}")
@@ -420,6 +454,15 @@ def main():
     p_post.add_argument("--mass", type=float, default=DEFAULT_M_BH)
     p_post.add_argument("--spin", type=float, default=DEFAULT_A_BH)
     p_post.add_argument("--max-trajectories", type=int, default=40)
+    p_post.add_argument("--pinhole", action="store_true",
+                         help="Set if the run used the pinhole camera (camera.use_pinhole=true) "
+                              "instead of the default image-plane camera, for correct image screen extent")
+    p_post.add_argument("--plane-dim1", type=float, default=DEFAULT_PLANE_DIM1,
+                         help="Image-plane camera width (config camera.plane_dim1); ignored with --pinhole")
+    p_post.add_argument("--plane-dim2", type=float, default=DEFAULT_PLANE_DIM2,
+                         help="Image-plane camera height (config camera.plane_dim2); ignored with --pinhole")
+    p_post.add_argument("--pinhole-aperture-radius", type=float, default=DEFAULT_PINHOLE_APERTURE_RADIUS,
+                         help="Pinhole camera screen radius (src/utils.hpp pinhole_aperture_radius); only used with --pinhole")
     p_post.set_defaults(func=cmd_post)
 
     p_watch = sub.add_parser("watch", help="Live terminal monitor while the simulation runs")

@@ -36,10 +36,12 @@ inline void initialize_photons_pinhole(
         Kokkos::RangePolicy<>(0, photons_per_process),
         KOKKOS_LAMBDA(int i) {
             auto rand_gen = rand_pool.get_state();
-            real r   = rand_gen.drand(0.0, 50.0);
+            real r   = rand_gen.drand(0.0, pinhole_aperture_radius);
             real phi = rand_gen.drand(0, 2.0 * PI);
-            real kx = -cam_x + r * cos(phi);
-            real ky = -cam_y + r * sin(phi);
+            real screen_u = r * cos(phi);
+            real screen_v = r * sin(phi);
+            real kx = -cam_x + screen_u;
+            real ky = -cam_y + screen_v;
             real kz = -cam_z;
             real k_norm = sqrt(kx * kx + ky * ky + kz * kz);
             rand_pool.free_state(rand_gen);
@@ -47,6 +49,11 @@ inline void initialize_photons_pinhole(
             photons.x1(i)  = cam_x;
             photons.x2(i)  = cam_y;
             photons.x3(i)  = cam_z;
+            // Screen-space impact parameters this photon's direction was sampled
+            // at, in the pinhole aperture plane -- fixed for the photon's lifetime,
+            // used by observation.hpp to bin it onto a stable camera-screen image.
+            photons.theta_disp(i) = screen_u;
+            photons.phi_disp(i) = screen_v;
             // Build a genuinely null contravariant wavevector at (0,cam_x,cam_y,cam_z)
             // with this spatial direction, then lower it to the covariant p_mu that
             // compute_rhs actually propagates (see kerr_schild_core.hpp).
@@ -58,7 +65,7 @@ inline void initialize_photons_pinhole(
             photons.k1(i)  = p_cov[1];
             photons.k2(i)  = p_cov[2];
             photons.k3(i)  = p_cov[3];
-            photons.I(i)  = 0.0;
+            photons.I(i)  = 1.0;
             photons.Q(i)  = 0.0;
             photons.U(i)  = 0.0;
             photons.V(i)  = 0.0;
@@ -107,12 +114,12 @@ inline void initialize_photons_image_camera(
         Kokkos::RangePolicy<>(0, photons_per_process),
         KOKKOS_LAMBDA(int i) {
             auto rand_gen = rand_pool.get_state();
-            real theta_disp   = rand_gen.drand(-plane_dim1/2, plane_dim1/2); // Sample radius in image plane
-            real phi_disp = rand_gen.drand(-plane_dim2/2, plane_dim2/2);
+            real screen_u = rand_gen.drand(-plane_dim1/2, plane_dim1/2); // Sample displacement in image plane
+            real screen_v = rand_gen.drand(-plane_dim2/2, plane_dim2/2);
             rand_pool.free_state(rand_gen);
-            real photon_x = plane_x_center + theta_disp * theta_hat[0] + phi_disp * phi_hat[0];
-            real photon_y = plane_y_center + theta_disp * theta_hat[1] + phi_disp * phi_hat[1];
-            real photon_z = plane_z_center + theta_disp * theta_hat[2] + phi_disp * phi_hat[2];
+            real photon_x = plane_x_center + screen_u * theta_hat[0] + screen_v * phi_hat[0];
+            real photon_y = plane_y_center + screen_u * theta_hat[1] + screen_v * phi_hat[1];
+            real photon_z = plane_z_center + screen_u * theta_hat[2] + screen_v * phi_hat[2];
             real kx = -plane_x_center;
             real ky = -plane_y_center;
             real kz = -plane_z_center;
@@ -136,12 +143,17 @@ inline void initialize_photons_image_camera(
             photons.k1(i)  = p_cov[1];
             photons.k2(i)  = p_cov[2];
             photons.k3(i)  = p_cov[3];
-            photons.I(i)  = 0.0;
+            photons.I(i)  = 1.0;
             photons.Q(i)  = 0.0;
             photons.U(i)  = 0.0;
             photons.V(i)  = 0.0;
             photons.dlambda(i) = dlambda * camera_distance;
             photons.terminate(i)  = false;
+            // Screen-space displacement this photon's pixel was sampled at in the
+            // image plane -- fixed for the photon's lifetime, used by
+            // observation.hpp to bin it onto a stable camera-screen image.
+            photons.theta_disp(i) = screen_u;
+            photons.phi_disp(i) = screen_v;
         }
     );
     photons.create_mirror_views();
@@ -173,7 +185,7 @@ inline void initialize_photons_user(
             photons.k1(i)  = 0.0;
             photons.k2(i)  = 0.0;
             photons.k3(i)  = 0.0;
-            photons.I(i)  = 0.0;
+            photons.I(i)  = 1.0;
             photons.Q(i)  = 0.0;
             photons.U(i)  = 0.0;
             photons.V(i)  = 0.0;

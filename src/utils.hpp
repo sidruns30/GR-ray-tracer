@@ -42,6 +42,11 @@ struct Photons {
     Kokkos::View<real*> k0, k1, k2, k3;
     Kokkos::View<real*> I, Q, U, V, dlambda;
     Kokkos::View<bool*> terminate;
+    // Fixed camera-screen coordinates the photon was launched from (set once at
+    // init time by initialize_photons.hpp) -- used by observation.hpp to bin
+    // image_I/Q/U/V onto a stable camera-screen pixel grid, as opposed to the
+    // photon's current (time-varying) x1/x2 position.
+    Kokkos::View<real*> theta_disp, phi_disp;
     Photons(int size, const std::string& label = "photons")
         : x0("x0", size),
           x1("x1", size),
@@ -56,7 +61,9 @@ struct Photons {
           U("U", size),
           V("V", size),
           dlambda("dlambda", size),
-          terminate("terminate", size)
+          terminate("terminate", size),
+          theta_disp("theta_disp", size),
+          phi_disp("phi_disp", size)
     {
         (void)label;
     }
@@ -65,6 +72,7 @@ struct Photons {
     Kokkos::View<real*, Kokkos::HostSpace> k0_host, k1_host, k2_host, k3_host;
     Kokkos::View<real*, Kokkos::HostSpace> I_host, Q_host, U_host, V_host, dlambda_host;
     Kokkos::View<bool*, Kokkos::HostSpace> terminate_host;
+    Kokkos::View<real*, Kokkos::HostSpace> theta_disp_host, phi_disp_host;
 
     void create_mirror_views() {
         x0_host = Kokkos::create_mirror_view(x0);
@@ -81,6 +89,8 @@ struct Photons {
         V_host  = Kokkos::create_mirror_view(V);
         dlambda_host  = Kokkos::create_mirror_view(dlambda);
         terminate_host = Kokkos::create_mirror_view(terminate);
+        theta_disp_host = Kokkos::create_mirror_view(theta_disp);
+        phi_disp_host = Kokkos::create_mirror_view(phi_disp);
     }
 
     void copy_to_host() {
@@ -102,6 +112,8 @@ struct Photons {
         Kokkos::deep_copy(V_host, V);
         Kokkos::deep_copy(dlambda_host, dlambda);
         Kokkos::deep_copy(terminate_host, terminate);
+        Kokkos::deep_copy(theta_disp_host, theta_disp);
+        Kokkos::deep_copy(phi_disp_host, phi_disp);
     }
 };
 
@@ -126,6 +138,10 @@ extern real camera_theta;      // Polar angle of camera position
 extern real camera_phi;        // Azimuthal angle of camera position
 extern real target_rmin;       // Minimum radius for photon targeting
 extern real target_rmax;       // Maximum radius for photon targeting
+// Radius of the disk in the camera's local screen plane that initial photon
+// directions are sampled over (see initialize_photons_pinhole). Shared with
+// observation.hpp so image bins use the same fixed screen-space extent.
+inline constexpr real pinhole_aperture_radius = 50.0;
 
 // Parameters for image camera setup
 extern bool use_image_camera;

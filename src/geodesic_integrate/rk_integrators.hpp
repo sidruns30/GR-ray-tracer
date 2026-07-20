@@ -56,13 +56,26 @@ inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs
     rhs(tmp, k6);
 
     real x4[N], x5[N], err = 0.0;
+    bool finite = true;
     for (std::size_t i = 0; i < N; ++i) {
         x4[i] = state[i] + dt * (b4_1 * k1[i] + b4_3 * k3[i] + b4_4 * k4[i] + b4_5 * k5[i]);
         x5[i] = state[i] + dt * (b5_1 * k1[i] + b5_3 * k3[i] + b5_4 * k4[i] + b5_5 * k5[i] + b5_6 * k6[i]);
         // Mixed relative/absolute error norm -- position components (~1e4) and
         // momentum components (~1) no longer share one absolute tolerance.
         const real scale_i = atol + rtol_ * std::max(std::abs(x5[i]), std::abs(x4[i]));
-        err = std::max(err, std::abs(x5[i] - x4[i]) / scale_i);
+        const real ratio = std::abs(x5[i] - x4[i]) / scale_i;
+        // std::max silently keeps the old `err` when compared against NaN (any
+        // comparison with NaN is false), so a step landing on a coordinate/
+        // curvature singularity (e.g. crossing r=0) could otherwise slip through
+        // as "small error" and get accepted, permanently corrupting the state.
+        if (!std::isfinite(x5[i]) || !std::isfinite(ratio)) finite = false;
+        err = std::max(err, ratio);
+    }
+
+    if (!finite) {
+        accepted = false;
+        dt *= min_step_scale;
+        return;
     }
 
     if (err == 0.0) {

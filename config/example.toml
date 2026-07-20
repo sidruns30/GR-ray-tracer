@@ -16,22 +16,22 @@ use_image = true
 theta = 0.7853981633974483   # pi/4, pinhole camera polar angle
 phi = 0.7853981633974483     # pi/4, pinhole camera azimuthal angle
 target_r_min = 0.0
-target_r_max = 2.0
+target_r_max = 3.0
 
-plane_dim1 = 20.0            # image plane extent along theta_hat, in rg/c
-plane_dim2 = 20.0            # image plane extent along phi_hat, in rg/c
+plane_dim1 = 5.0            # image plane extent along theta_hat, in rg/c
+plane_dim2 = 5.0            # image plane extent along phi_hat, in rg/c
 plane_theta = 1.5707963267948966  # pi/2, image plane polar angle
 plane_phi = 0.7853981633974483    # pi/4, image plane azimuthal angle
 
-distance = 10000.0           # camera distance from origin, in rg/c
+distance = 40.0           # camera distance from origin, in rg/c
 
 [photons]
-count = 2000000                   # total photons traced, split across MPI ranks
+count = 5000000                   # total photons traced, split across MPI ranks
 
 [integration]
-max_steps = 10000
-termination_percent = 0.9    # stop once this fraction of photons has terminated
-initial_step = 0.1           # initial dlambda guess (scaled by camera_distance)
+max_steps = 1000
+termination_percent = 0.95    # stop once this fraction of photons has terminated
+initial_step = 0.01           # initial dlambda guess (scaled by camera_distance)
 atol = 1e-8
 rtol = 1e-8
 
@@ -39,7 +39,7 @@ rtol = 1e-8
 # Photons terminate once their Kerr-Schild radius leaves [r_min, r_max].
 # Leave commented to default to R_HORIZON and 1.5*camera.distance respectively.
 # r_min = 1.0
-# r_max = 15000.0
+# r_max = 500.0
 
 [output]
-interval = 500                 # write photon/observation output every N steps
+interval = 20                 # write photon/observation output every N steps

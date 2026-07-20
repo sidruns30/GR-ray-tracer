@@ -47,48 +47,60 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    if (options.vacuum && options.enable_scattering) {
+        if (mpi_rank == 0) {
+            WARN("--vacuum was passed together with --scatter; disabling scattering since it has no "
+                 "medium to scatter off of without grid/MHD data.");
+        }
+        options.enable_scattering = false;
+    }
+
     // Initialize Kokkos
     Kokkos::initialize(argc, argv);
     {
         Timers timers(max_steps, output_interval);
+        NumpyFieldViews fields; // left default-constructed (empty views) in --vacuum mode
 
-        timers.AddTimer("Load HAMR Data");
-        timers.BeginTimer("Load HAMR Data");
-        NumpyFieldPaths paths = options.fields;
-        if (paths.r.empty()) paths.r = "./r.npy";
-        if (paths.theta.empty()) paths.theta = "./theta.npy";
-        if (paths.phi.empty()) paths.phi = "./phi.npy";
-        if (paths.density.empty()) paths.density = "./rho.npy";
-        if (paths.temperature.empty()) paths.temperature = "./Tgas.npy";
-        if (paths.velocity.empty()) paths.velocity = "./vel.npy";
-        if (paths.magnetic.empty()) paths.magnetic = "./mag.npy";
+        if (!options.vacuum) {
+            timers.AddTimer("Load HAMR Data");
+            timers.BeginTimer("Load HAMR Data");
+            NumpyFieldPaths paths = options.fields;
+            if (paths.r.empty()) paths.r = "./r.npy";
+            if (paths.theta.empty()) paths.theta = "./theta.npy";
+            if (paths.phi.empty()) paths.phi = "./phi.npy";
+            if (paths.density.empty()) paths.density = "./rho.npy";
+            if (paths.temperature.empty()) paths.temperature = "./Tgas.npy";
+            if (paths.velocity.empty()) paths.velocity = "./vel.npy";
+            if (paths.magnetic.empty()) paths.magnetic = "./mag.npy";
 
-        NumpyFieldViews fields;
-        try {
-            fields = load_numpy_field_bundle(paths);
-        } catch (const std::exception& e) {
-            if (mpi_rank == 0) {
-                ERROR(std::string("Failed to load input grid data: ") + e.what());
-                ERROR("Expected grid files: " + paths.r + ", " + paths.theta + ", " + paths.phi + ", " +
-                      paths.density + ", " + paths.temperature + ", " + paths.velocity + ", " + paths.magnetic);
-                ERROR("Generate example grid data with: python3 src/create_example_data.py --output-dir <dir>, "
-                      "or point at real data with --grid-r/--grid-theta/--grid-phi/--density/--temperature/"
-                      "--velocity/--magnetic.");
+            try {
+                fields = load_numpy_field_bundle(paths);
+            } catch (const std::exception& e) {
+                if (mpi_rank == 0) {
+                    ERROR(std::string("Failed to load input grid data: ") + e.what());
+                    ERROR("Expected grid files: " + paths.r + ", " + paths.theta + ", " + paths.phi + ", " +
+                          paths.density + ", " + paths.temperature + ", " + paths.velocity + ", " + paths.magnetic);
+                    ERROR("Generate example grid data with: python3 src/create_example_data.py --output-dir <dir>, "
+                          "or point at real data with --grid-r/--grid-theta/--grid-phi/--density/--temperature/"
+                          "--velocity/--magnetic, or pass --vacuum to skip grid data and run pure vacuum geodesics.");
+                }
+                Kokkos::finalize();
+                MPI_Finalize();
+                return 1;
             }
-            Kokkos::finalize();
-            MPI_Finalize();
-            return 1;
-        }
-        timers.EndTimer("Load HAMR Data");
+            timers.EndTimer("Load HAMR Data");
 
-        // Initialize camera and pixels
-        if (verbose && mpi_rank == 0) {
-            INFO("Grid dimensions: nr=" + std::to_string(nr) + ", ntheta=" + std::to_string(ntheta) + ", nphi=" + 
-            std::to_string(nphi), Colors::cyan);
-            INFO("r coordinate from " + std::to_string(r_min) + " to " + std::to_string(r_max), Colors::hotpink);
-            INFO("theta coordinate from " + std::to_string(theta_min) + " to " + std::to_string(theta_max), Colors::hotpink);
-            INFO("phi coordinate from " + std::to_string(phi_min) + " to " + std::to_string(phi_max), Colors::hotpink);
+            if (verbose && mpi_rank == 0) {
+                INFO("Grid dimensions: nr=" + std::to_string(nr) + ", ntheta=" + std::to_string(ntheta) + ", nphi=" +
+                std::to_string(nphi), Colors::cyan);
+                INFO("r coordinate from " + std::to_string(r_min) + " to " + std::to_string(r_max), Colors::hotpink);
+                INFO("theta coordinate from " + std::to_string(theta_min) + " to " + std::to_string(theta_max), Colors::hotpink);
+                INFO("phi coordinate from " + std::to_string(phi_min) + " to " + std::to_string(phi_max), Colors::hotpink);
+            }
+        } else if (mpi_rank == 0) {
+            INFO("Running in --vacuum mode: no grid/MHD data loaded, scattering disabled.", Colors::cyan);
         }
+
         // Initialize a fraction of photons per mpi process for back tracing from camera
         const int photons_per_process = nphotons / mpi_size;
         Photons photons(photons_per_process, "photons_");

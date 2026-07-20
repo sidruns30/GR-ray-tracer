@@ -26,13 +26,18 @@ The executable accepts NumPy `.npy` files for the grid coordinates and fields
 `./r.npy`, `./theta.npy`, `./phi.npy`, `./rho.npy`, `./Tgas.npy`, `./vel.npy`,
 and `./mag.npy` in the current working directory. If a file isn't found there,
 generate placeholder grid data with `python3 src/create_example_data.py
---output-dir <dir>`.
+--output-dir <dir>`, or pass `--vacuum` to skip grid/MHD data entirely and
+trace pure vacuum geodesics (the geodesic integrator doesn't currently read
+`rho`/`Tgas` at all, so this changes nothing physics-wise -- it just skips the
+file-loading requirement). `--vacuum` also forces scattering off, since
+scattering has no medium to scatter off of without a density grid.
 
 ## Command-line flags
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--config <path>` | none | TOML file overriding black hole mass/spin, camera setup, photon count, termination radii, integration tolerances, and output cadence -- see [Simulation config](#simulation-config) |
+| `--vacuum` | off | Skip loading grid/MHD data entirely; forces `--scatter` off |
 | `--grid-r <path>` | `./r.npy` | 1D `r` coordinate array (must be log-uniformly spaced) |
 | `--grid-theta <path>` | `./theta.npy` | 1D `theta` coordinate array (must be linearly uniform) |
 | `--grid-phi <path>` | `./phi.npy` | 1D `phi` coordinate array (must be linearly uniform) |

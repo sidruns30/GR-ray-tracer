@@ -151,9 +151,21 @@ struct Geodesic_cartesian_kerr_schild {
         };
         // Compute distance traveled for adaptive step sizing if needed
         real photon_distance = kerr_schild::compute_r(state[IX], state[IY], state[IZ]);
-        if (photon_distance <= r_term_min || photon_distance > r_term_max) {
+        if (photon_distance <= r_term_min) {
+            // Absorbed by the horizon: no radiation reaches the camera along this
+            // ray, so it contributes nothing to image_I/Q/U/V -- this is what
+            // makes the black-hole shadow visible in the observation image.
+            photon_I(idx) = 0.0;
+            photon_Q(idx) = 0.0;
+            photon_U(idx) = 0.0;
+            photon_V(idx) = 0.0;
             photon_terminate(idx) = true;
-            return;}
+            return;
+        }
+        if (photon_distance > r_term_max) {
+            photon_terminate(idx) = true;
+            return;
+        }
         
         if (integrator == IntegratorType::RK4) {
             rk4_step(state, photon_dlambda(idx));
