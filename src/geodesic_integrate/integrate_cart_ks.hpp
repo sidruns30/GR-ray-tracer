@@ -186,6 +186,16 @@ struct Geodesic_cartesian_kerr_schild {
                    static_cast<unsigned long long>(step_index), state[0], state[1], state[2], state[3],
                    state[4], state[5], state[6], state[7],
                    photon_dlambda(idx), static_cast<int>(integrator));
+            real dbg_rhs[8];
+            compute_rhs(state, dbg_rhs);
+            real dbg_ginv[4][4];
+            const real dbg_X[4] = {state[IT], state[IX], state[IY], state[IZ]};
+            kerr_schild::compute_inverse_metric(dbg_X, a_BH, M_BH, dbg_ginv);
+            printf("[GPUDBG] step=%llu idx=0 a_BH=%.9f M_BH=%.9f rhs=(%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e) ginv00=%.9e ginv11=%.9e\n",
+                   static_cast<unsigned long long>(step_index), a_BH, M_BH,
+                   dbg_rhs[0], dbg_rhs[1], dbg_rhs[2], dbg_rhs[3],
+                   dbg_rhs[4], dbg_rhs[5], dbg_rhs[6], dbg_rhs[7],
+                   dbg_ginv[0][0], dbg_ginv[1][1]);
         }
         // Compute distance traveled for adaptive step sizing if needed
         real photon_distance = kerr_schild::compute_r(state[IX], state[IY], state[IZ], a_BH);
