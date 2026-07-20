@@ -4,8 +4,15 @@
 
 namespace rk_detail {
 
+// state/dt/accepted etc. below are raw pointers rather than C++ references
+// (real&, real(&)[N]) -- on an H200/Hopper90 build, reference *output*
+// parameters on this templated function were observed to silently not
+// propagate writes back to the caller (dt/accepted/debug-out pointers all
+// came back at their untouched initial values), while compute_rhs's plain
+// pointer/array-decay output parameter worked correctly on the same
+// hardware. Pointers are the pattern already proven to work there.
 template <std::size_t N, typename RHS>
-inline void rk4_step(real (&state)[N], real dt, const RHS& rhs) {
+inline void rk4_step(real* state, real dt, const RHS& rhs) {
     real k1[N], k2[N], k3[N], k4[N], tmp[N];
     rhs(state, k1);
     for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + 0.5 * dt * k1[i];
@@ -29,7 +36,7 @@ inline void rk4_step(real (&state)[N], real dt, const RHS& rhs) {
 // (even as a default-argument initializer) fails to compile for a GPU backend
 // with "identifier undefined in device code" -- see kerr_schild_core.hpp.
 template <std::size_t N, typename RHS>
-inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs, const real (&k1)[N],
+inline void rk45_step(real* state, real* dt, bool* accepted, const RHS& rhs, const real* k1,
                       real atol, real rtol_, real min_step_scale, real max_step_scale, real safety_factor,
                       // Optional diagnostics: when non-null, the computed err/finite
                       // are written back regardless of accept/reject, so a caller can
@@ -51,23 +58,24 @@ inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs
     const real b5_5 = -9.0 / 50.0;
     const real b5_6 = 2.0 / 55.0;
 
+    const real dt_val = *dt;
     real k2[N], k3[N], k4[N], k5[N], k6[N], tmp[N];
-    for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt * a21 * k1[i];
+    for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt_val * a21 * k1[i];
     rhs(tmp, k2);
-    for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt * (a31 * k1[i] + a32 * k2[i]);
+    for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt_val * (a31 * k1[i] + a32 * k2[i]);
     rhs(tmp, k3);
-    for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt * (a41 * k1[i] + a42 * k2[i] + a43 * k3[i]);
+    for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt_val * (a41 * k1[i] + a42 * k2[i] + a43 * k3[i]);
     rhs(tmp, k4);
-    for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt * (a51 * k1[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
+    for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt_val * (a51 * k1[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
     rhs(tmp, k5);
-    for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt * (a61 * k1[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
+    for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt_val * (a61 * k1[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
     rhs(tmp, k6);
 
     real x4[N], x5[N], err = 0.0;
     bool finite = true;
     for (std::size_t i = 0; i < N; ++i) {
-        x4[i] = state[i] + dt * (b4_1 * k1[i] + b4_3 * k3[i] + b4_4 * k4[i] + b4_5 * k5[i]);
-        x5[i] = state[i] + dt * (b5_1 * k1[i] + b5_3 * k3[i] + b5_4 * k4[i] + b5_5 * k5[i] + b5_6 * k6[i]);
+        x4[i] = state[i] + dt_val * (b4_1 * k1[i] + b4_3 * k3[i] + b4_4 * k4[i] + b4_5 * k5[i]);
+        x5[i] = state[i] + dt_val * (b5_1 * k1[i] + b5_3 * k3[i] + b5_4 * k4[i] + b5_5 * k5[i] + b5_6 * k6[i]);
         // Mixed relative/absolute error norm -- position components (~1e4) and
         // momentum components (~1) no longer share one absolute tolerance.
         const real scale_i = atol + rtol_ * std::max(std::abs(x5[i]), std::abs(x4[i]));
@@ -84,14 +92,14 @@ inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs
     if (debug_finite_out) *debug_finite_out = finite;
 
     if (!finite) {
-        accepted = false;
-        dt *= min_step_scale;
+        *accepted = false;
+        *dt = dt_val * min_step_scale;
         return;
     }
 
     if (err == 0.0) {
-        accepted = true;
-        dt *= max_step_scale;
+        *accepted = true;
+        *dt = dt_val * max_step_scale;
         for (std::size_t i = 0; i < N; ++i) state[i] = x5[i];
         return;
     }
@@ -99,12 +107,12 @@ inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs
     real scale = safety_factor * std::pow(1.0 / err, 0.25);
     scale = std::clamp(scale, min_step_scale, max_step_scale);
     if (err < 1.0) {
-        accepted = true;
-        dt *= scale;
+        *accepted = true;
+        *dt = dt_val * scale;
         for (std::size_t i = 0; i < N; ++i) state[i] = x5[i];
     } else {
-        accepted = false;
-        dt *= scale;
+        *accepted = false;
+        *dt = dt_val * scale;
     }
 }
 

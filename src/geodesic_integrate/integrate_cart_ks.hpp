@@ -147,17 +147,19 @@ struct Geodesic_cartesian_kerr_schild {
     }
 
     KOKKOS_FUNCTION
-    void rk4_step(real (&state)[8], real dt_local) const {
+    void rk4_step(real* state, real dt_local) const {
         rk_detail::rk4_step<8>(state, dt_local, *this);
     }
 
     // step_accepted drives the retry loop in operator() below.
+    // state/dlambda/step_accepted/k1 are raw pointers, not C++ references --
+    // see the comment on rk_detail::rk4_step/rk45_step in rk_integrators.hpp.
     KOKKOS_FUNCTION
     void rk45_step(
-        real (&state)[8],
-        real& dlambda,
-        bool& step_accepted,
-        const real (&k1)[8],
+        real* state,
+        real* dlambda,
+        bool* step_accepted,
+        const real* k1,
         real* debug_err_out = nullptr,
         bool* debug_finite_out = nullptr
     ) const
@@ -242,12 +244,12 @@ struct Geodesic_cartesian_kerr_schild {
                     real dbg_err = -1.0;
                     bool dbg_finite = true;
                     real dt_before = photon_dlambda(idx);
-                    rk45_step(state, photon_dlambda(idx), step_accepted, k1, &dbg_err, &dbg_finite);
+                    rk45_step(state, &photon_dlambda(idx), &step_accepted, k1, &dbg_err, &dbg_finite);
                     printf("[GPUDBG] step=%llu idx=0 rk45 attempt=%d dt_before=%.9e dt_after=%.9e err=%.9e finite=%d accepted=%d\n",
                            static_cast<unsigned long long>(step_index), attempts, dt_before, photon_dlambda(idx),
                            dbg_err, static_cast<int>(dbg_finite), static_cast<int>(step_accepted));
                 } else {
-                    rk45_step(state, photon_dlambda(idx), step_accepted, k1);
+                    rk45_step(state, &photon_dlambda(idx), &step_accepted, k1);
                 }
                 attempts++;
             }

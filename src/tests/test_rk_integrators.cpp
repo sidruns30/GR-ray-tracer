@@ -19,7 +19,7 @@ int main() {
     bool accepted = false;
     real k1[2];
     rhs(state_rk45, k1);
-    rk_detail::rk45_step<2>(state_rk45, dt, accepted, rhs, k1,
+    rk_detail::rk45_step<2>(state_rk45, &dt, &accepted, rhs, k1,
                              atol_default, rtol_default, min_scale, max_scale, safety);
     assert(accepted);
     assert(std::abs(state_rk45[0] - 0.0) < 1e-14);
