@@ -45,6 +45,11 @@ struct Geodesic_cartesian_kerr_schild {
     size_t nr, ntheta, nphi;
     const real r_term_min;
     const real r_term_max;
+    // Captured by value from the (runtime-configurable) globals at functor
+    // construction, since device code can't read `extern real` globals directly
+    // -- see the comment in kerr_schild_core.hpp.
+    const real a_BH;
+    const real M_BH;
     const ScatteringModel scattering_model;
     const std::size_t step_index;
     const IntegratorType integrator;
@@ -57,8 +62,9 @@ struct Geodesic_cartesian_kerr_schild {
       const Kokkos::View<real***>& rho_,
       const Kokkos::View<real***>& Tgas_,
       real r_min_, real r_max_, real theta_min_, real theta_max_,
-      real phi_min_, real phi_max_, real dlog_r_, 
+      real phi_min_, real phi_max_, real dlog_r_,
       size_t nr_, size_t ntheta_, size_t nphi_, const real r_term_min_, const real r_term_max_,
+      real a_BH_, real M_BH_,
       const ScatteringModel& scattering_model_ = ScatteringModel{},
       std::size_t step_index_ = 0,
       IntegratorType integrator_ = IntegratorType::RK45)
@@ -70,6 +76,7 @@ struct Geodesic_cartesian_kerr_schild {
        r_min(r_min_), r_max(r_max_), theta_min(theta_min_), theta_max(theta_max_),
        phi_min(phi_min_), phi_max(phi_max_), dlog_r(dlog_r_),
        nr(nr_), ntheta(ntheta_), nphi(nphi_), r_term_min(r_term_min_), r_term_max(r_term_max_),
+       a_BH(a_BH_), M_BH(M_BH_),
        scattering_model(scattering_model_), step_index(step_index_), integrator(integrator_) {};
 
     KOKKOS_FUNCTION
@@ -86,8 +93,8 @@ struct Geodesic_cartesian_kerr_schild {
         p_cov[3] = state[IKZ];
         real ginv[4][4];
         real dginv[4][4][4];
-        kerr_schild::compute_inverse_metric(x, ginv);
-        kerr_schild::compute_inverse_metric_deriv(x, dginv);
+        kerr_schild::compute_inverse_metric(x, a_BH, M_BH, ginv);
+        kerr_schild::compute_inverse_metric_deriv(x, a_BH, M_BH, dginv);
         real p_contra[4];
         for (int mu=0; mu<4; ++mu) {
           real sum = 0.0;
@@ -150,7 +157,7 @@ struct Geodesic_cartesian_kerr_schild {
             photon_k3(idx)
         };
         // Compute distance traveled for adaptive step sizing if needed
-        real photon_distance = kerr_schild::compute_r(state[IX], state[IY], state[IZ]);
+        real photon_distance = kerr_schild::compute_r(state[IX], state[IY], state[IZ], a_BH);
         if (photon_distance <= r_term_min) {
             // Absorbed by the horizon: no radiation reaches the camera along this
             // ray, so it contributes nothing to image_I/Q/U/V -- this is what
@@ -233,7 +240,7 @@ inline void integrate_geodesics(
         timers.BeginTimer("Geodesic Integration");
         Geodesic_cartesian_kerr_schild step_functor(photons, r, theta, phi, rho, Tgas,
             r_min, r_max, theta_min, theta_max, phi_min, phi_max, dlog_r, nr, ntheta, nphi,
-            termination_r_min, termination_r_max, scattering_model,
+            termination_r_min, termination_r_max, a_BH, M_BH, scattering_model,
             static_cast<std::size_t>(current_step), integrator);
         Kokkos::parallel_for(
         "RK4 Cartesian Kerr-Schild Step",

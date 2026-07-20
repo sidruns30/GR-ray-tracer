@@ -30,6 +30,12 @@ inline void initialize_photons_pinhole(
     real cam_x = camera_distance * sin(camera_theta) * cos(camera_phi);
     real cam_y = camera_distance * sin(camera_theta) * sin(camera_phi);
     real cam_z = camera_distance * cos(camera_theta);
+    // Local captures of runtime-configurable globals: device code can't read
+    // `extern real` globals directly (see kerr_schild_core.hpp), but the
+    // KOKKOS_LAMBDA below captures locals in this scope by value, which works.
+    const real a_BH_ = a_BH;
+    const real M_BH_ = M_BH;
+    const real dlambda_init = dlambda;
     Kokkos::Random_XorShift64_Pool<> rand_pool(12345 + mpi_rank);
     Kokkos::parallel_for(
         "InitPhotons",
@@ -60,7 +66,7 @@ inline void initialize_photons_pinhole(
             const real X[4] = {0.0, cam_x, cam_y, cam_z};
             const real K_spatial[3] = {kx / k_norm, ky / k_norm, kz / k_norm};
             real p_cov[4];
-            kerr_schild::null_covariant_momentum_from_spatial_direction(X, K_spatial, p_cov);
+            kerr_schild::null_covariant_momentum_from_spatial_direction(X, K_spatial, a_BH_, M_BH_, p_cov);
             photons.k0(i)  = p_cov[0];
             photons.k1(i)  = p_cov[1];
             photons.k2(i)  = p_cov[2];
@@ -69,7 +75,7 @@ inline void initialize_photons_pinhole(
             photons.Q(i)  = 0.0;
             photons.U(i)  = 0.0;
             photons.V(i)  = 0.0;
-            photons.dlambda(i) = dlambda * camera_distance;
+            photons.dlambda(i) = dlambda_init * camera_distance;
             photons.terminate(i)  = false;
         }
     );
@@ -108,14 +114,21 @@ inline void initialize_photons_image_camera(
         cos(plane_phi),
         0.0
         };
+    // Local captures of runtime-configurable globals -- see the comment in
+    // initialize_photons_pinhole above.
+    const real a_BH_ = a_BH;
+    const real M_BH_ = M_BH;
+    const real dlambda_init = dlambda;
+    const real plane_dim1_ = plane_dim1;
+    const real plane_dim2_ = plane_dim2;
     Kokkos::Random_XorShift64_Pool<> rand_pool(12345 + mpi_rank);
     Kokkos::parallel_for(
         "InitPhotonsImageCamera",
         Kokkos::RangePolicy<>(0, photons_per_process),
         KOKKOS_LAMBDA(int i) {
             auto rand_gen = rand_pool.get_state();
-            real screen_u = rand_gen.drand(-plane_dim1/2, plane_dim1/2); // Sample displacement in image plane
-            real screen_v = rand_gen.drand(-plane_dim2/2, plane_dim2/2);
+            real screen_u = rand_gen.drand(-plane_dim1_/2, plane_dim1_/2); // Sample displacement in image plane
+            real screen_v = rand_gen.drand(-plane_dim2_/2, plane_dim2_/2);
             rand_pool.free_state(rand_gen);
             real photon_x = plane_x_center + screen_u * theta_hat[0] + screen_v * phi_hat[0];
             real photon_y = plane_y_center + screen_u * theta_hat[1] + screen_v * phi_hat[1];
@@ -138,7 +151,7 @@ inline void initialize_photons_image_camera(
             const real X[4] = {0.0, photon_x, photon_y, photon_z};
             const real K_spatial[3] = {kx, ky, kz};
             real p_cov[4];
-            kerr_schild::null_covariant_momentum_from_spatial_direction(X, K_spatial, p_cov);
+            kerr_schild::null_covariant_momentum_from_spatial_direction(X, K_spatial, a_BH_, M_BH_, p_cov);
             photons.k0(i)  = p_cov[0];
             photons.k1(i)  = p_cov[1];
             photons.k2(i)  = p_cov[2];
@@ -147,7 +160,7 @@ inline void initialize_photons_image_camera(
             photons.Q(i)  = 0.0;
             photons.U(i)  = 0.0;
             photons.V(i)  = 0.0;
-            photons.dlambda(i) = dlambda * camera_distance;
+            photons.dlambda(i) = dlambda_init * camera_distance;
             photons.terminate(i)  = false;
             // Screen-space displacement this photon's pixel was sampled at in the
             // image plane -- fixed for the photon's lifetime, used by

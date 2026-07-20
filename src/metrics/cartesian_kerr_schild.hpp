@@ -8,9 +8,9 @@
 
 // Compute the norm of the contravariant vector V at position X in Cartesian Kerr-Schild coordinates
 KOKKOS_INLINE_FUNCTION
-real cartesian_kerr_schild_norm(const real X[4], const real V[4]) {
+real cartesian_kerr_schild_norm(const real X[4], const real V[4], real a_BH, real M_BH) {
     real g_con[4][4];
-    kerr_schild::compute_inverse_metric(X, g_con);
+    kerr_schild::compute_inverse_metric(X, a_BH, M_BH, g_con);
     real norm = 0.0;
     for (int mu = 0; mu < 4; ++mu) {
         for (int nu = 0; nu < 4; ++nu) {
@@ -33,6 +33,8 @@ inline void compute_cartesian_kerr_schild_norms(
     Kokkos::View<real*>& norms
 ) {
     const size_t N = x1.extent(0);
+    const real a_BH_ = a_BH;
+    const real M_BH_ = M_BH;
     Kokkos::parallel_for(
         "Compute Cartesian Kerr-Schild Norms",
         Kokkos::RangePolicy<>(0, N),
@@ -49,7 +51,7 @@ inline void compute_cartesian_kerr_schild_norms(
                 k2(i),
                 k3(i)
             };
-            norms(i) = cartesian_kerr_schild_norm(X, V);
+            norms(i) = cartesian_kerr_schild_norm(X, V, a_BH_, M_BH_);
         }
     );
     return;

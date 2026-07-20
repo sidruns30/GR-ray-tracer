@@ -18,8 +18,14 @@
 
 namespace kerr_schild {
 
+// a_BH/M_BH are threaded through explicitly rather than read as globals: they
+// are runtime-configurable (see toml_config.hpp) plain `extern real` storage,
+// which has no device-side symbol, so referencing them by name from code that
+// gets compiled for a GPU backend fails with "identifier undefined in device
+// code" -- callers must pass in a value already captured on the host/functor.
+
 KOKKOS_INLINE_FUNCTION
-real compute_r(real x, real y, real z) {
+real compute_r(real x, real y, real z, real a_BH) {
     const real rsq = SQR(x) + SQR(y) + SQR(z);
     const real A = rsq - SQR(a_BH);
     const real S = sqrt(SQR(A) + 4.0 * SQR(a_BH * z));
@@ -28,7 +34,7 @@ real compute_r(real x, real y, real z) {
 
 // r and dr/dx^k for k=0,1,2 (x,y,z)
 KOKKOS_INLINE_FUNCTION
-void compute_r_and_deriv(real x, real y, real z, real& r, real dr[3]) {
+void compute_r_and_deriv(real x, real y, real z, real a_BH, real& r, real dr[3]) {
     const real rsq = SQR(x) + SQR(y) + SQR(z);
     const real A = rsq - SQR(a_BH);
     const real S = sqrt(SQR(A) + 4.0 * SQR(a_BH * z));
@@ -41,7 +47,7 @@ void compute_r_and_deriv(real x, real y, real z, real& r, real dr[3]) {
 
 // l_mu (covariant, l[0]=1) and, if requested, dl[k][mu] = d(l_mu)/dx^k for k=0,1,2 (x,y,z)
 KOKKOS_INLINE_FUNCTION
-void compute_l(real x, real y, real z, real r, real l[4]) {
+void compute_l(real x, real y, real z, real r, real a_BH, real l[4]) {
     const real B = SQR(r) + SQR(a_BH);
     l[0] = 1.0;
     l[1] = (r * x + a_BH * y) / B;
@@ -50,7 +56,7 @@ void compute_l(real x, real y, real z, real r, real l[4]) {
 }
 
 KOKKOS_INLINE_FUNCTION
-void compute_l_and_deriv(real x, real y, real z, real r, const real dr[3], real l[4], real dl[3][4]) {
+void compute_l_and_deriv(real x, real y, real z, real r, const real dr[3], real a_BH, real l[4], real dl[3][4]) {
     const real B = SQR(r) + SQR(a_BH);
     l[0] = 1.0;
     l[1] = (r * x + a_BH * y) / B;
@@ -71,13 +77,13 @@ void compute_l_and_deriv(real x, real y, real z, real r, const real dr[3], real 
 }
 
 KOKKOS_INLINE_FUNCTION
-real compute_H(real r, real z) {
+real compute_H(real r, real z, real a_BH, real M_BH) {
     const real D = QUAD(r) + SQR(a_BH * z);
     return M_BH * CUBE(r) / D;
 }
 
 KOKKOS_INLINE_FUNCTION
-real compute_H_and_deriv(real r, real z, const real dr[3], real dH[3]) {
+real compute_H_and_deriv(real r, real z, const real dr[3], real a_BH, real M_BH, real dH[3]) {
     const real D = QUAD(r) + SQR(a_BH * z);
     const real H = M_BH * CUBE(r) / D;
     for (int k = 0; k < 3; ++k) {
@@ -90,11 +96,11 @@ real compute_H_and_deriv(real r, real z, const real dr[3], real dH[3]) {
 
 // Covariant metric g_{mu nu} at position X = (t, x, y, z)
 KOKKOS_INLINE_FUNCTION
-void compute_metric(const real X[4], real g[4][4]) {
-    const real r = compute_r(X[1], X[2], X[3]);
+void compute_metric(const real X[4], real a_BH, real M_BH, real g[4][4]) {
+    const real r = compute_r(X[1], X[2], X[3], a_BH);
     real ldown[4];
-    compute_l(X[1], X[2], X[3], r, ldown);
-    const real H = compute_H(r, X[3]);
+    compute_l(X[1], X[2], X[3], r, a_BH, ldown);
+    const real H = compute_H(r, X[3], a_BH, M_BH);
     const real eta[4] = {-1.0, 1.0, 1.0, 1.0}; // diagonal entries of eta_{mu nu}
     for (int mu = 0; mu < 4; ++mu) {
         for (int nu = 0; nu < 4; ++nu) {
@@ -105,12 +111,12 @@ void compute_metric(const real X[4], real g[4][4]) {
 
 // Contravariant metric g^{mu nu} at position X = (t, x, y, z)
 KOKKOS_INLINE_FUNCTION
-void compute_inverse_metric(const real X[4], real ginv[4][4]) {
-    const real r = compute_r(X[1], X[2], X[3]);
+void compute_inverse_metric(const real X[4], real a_BH, real M_BH, real ginv[4][4]) {
+    const real r = compute_r(X[1], X[2], X[3], a_BH);
     real ldown[4];
-    compute_l(X[1], X[2], X[3], r, ldown);
+    compute_l(X[1], X[2], X[3], r, a_BH, ldown);
     const real lup[4] = {-ldown[0], ldown[1], ldown[2], ldown[3]};
-    const real H = compute_H(r, X[3]);
+    const real H = compute_H(r, X[3], a_BH, M_BH);
     const real eta_inv[4] = {-1.0, 1.0, 1.0, 1.0}; // diagonal entries of eta^{mu nu}
     for (int mu = 0; mu < 4; ++mu) {
         for (int nu = 0; nu < 4; ++nu) {
@@ -122,13 +128,13 @@ void compute_inverse_metric(const real X[4], real ginv[4][4]) {
 // Analytic derivative of the contravariant metric: dginv[alpha][mu][nu] = d(g^{mu nu}) / dX^alpha
 // The metric is stationary, so dginv[0][*][*] = 0 identically.
 KOKKOS_INLINE_FUNCTION
-void compute_inverse_metric_deriv(const real X[4], real dginv[4][4][4]) {
+void compute_inverse_metric_deriv(const real X[4], real a_BH, real M_BH, real dginv[4][4][4]) {
     real r, dr[3];
-    compute_r_and_deriv(X[1], X[2], X[3], r, dr);
+    compute_r_and_deriv(X[1], X[2], X[3], a_BH, r, dr);
     real ldown[4], dldown[3][4];
-    compute_l_and_deriv(X[1], X[2], X[3], r, dr, ldown, dldown);
+    compute_l_and_deriv(X[1], X[2], X[3], r, dr, a_BH, ldown, dldown);
     real dH[3];
-    const real H = compute_H_and_deriv(r, X[3], dr, dH);
+    const real H = compute_H_and_deriv(r, X[3], dr, a_BH, M_BH, dH);
 
     const real lup[4] = {-ldown[0], ldown[1], ldown[2], ldown[3]};
 
@@ -155,9 +161,9 @@ void compute_inverse_metric_deriv(const real X[4], real dginv[4][4][4]) {
 // future-directed real root exists (should not happen for physically sensible
 // spatial directions outside the horizon).
 KOKKOS_INLINE_FUNCTION
-bool null_covariant_momentum_from_spatial_direction(const real X[4], const real K_spatial[3], real p_cov[4]) {
+bool null_covariant_momentum_from_spatial_direction(const real X[4], const real K_spatial[3], real a_BH, real M_BH, real p_cov[4]) {
     real g[4][4];
-    compute_metric(X, g);
+    compute_metric(X, a_BH, M_BH, g);
     const real a = g[0][0];
     const real b = 2.0 * (g[0][1] * K_spatial[0] + g[0][2] * K_spatial[1] + g[0][3] * K_spatial[2]);
     real c = 0.0;
