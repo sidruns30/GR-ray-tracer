@@ -132,28 +132,34 @@ struct Geodesic_cartesian_kerr_schild {
         return;
     }
 
-    // RHS callable passed to rk_detail::rk4_step/rk45_step below. Deliberately
-    // *this (an operator() overload) rather than a KOKKOS_LAMBDA capturing
-    // `this` -- the latter was observed to silently no-op on an H200/Hopper90
-    // build (rk4_step/rk45_step's by-reference/pointer outputs were left
-    // completely untouched, sentinel values and all, while a *direct*
-    // compute_rhs(...) call from operator() worked correctly on the same
-    // hardware). A nested extended-__device__-lambda capturing `this`, forwarded
-    // as a generic template parameter into another function, is a known rough
-    // edge for some CUDA toolchains -- passing the functor itself sidesteps it.
-    KOKKOS_FUNCTION
-    void operator()(const real in[8], real out[8]) const {
-        compute_rhs(in, out);
-    }
-
+    // rk4_step/rk45_step below duplicate rk_detail::rk4_step/rk45_step's
+    // Butcher-tableau logic inline (calling compute_rhs directly) rather than
+    // delegating to that generic template. On an H200/Hopper90 build, calling
+    // rk_detail::rk4_step<8>/rk45_step<8> -- with a self-capturing KOKKOS_LAMBDA
+    // as the RHS, and separately after replacing that with passing the functor
+    // itself, and separately again after converting its reference output
+    // params to pointers -- was a complete no-op every time: state/dt/accepted
+    // and even freshly-added debug output pointers came back at their
+    // untouched initial values, as if the template function's body never ran.
+    // A *direct*, non-template compute_rhs(...) call from operator() worked
+    // correctly and matched CPU throughout. rk_detail:: itself is left as-is
+    // for its host-only unit test (test_rk_integrators.cpp).
     KOKKOS_FUNCTION
     void rk4_step(real* state, real dt_local) const {
-        rk_detail::rk4_step<8>(state, dt_local, *this);
+        real k1[8], k2[8], k3[8], k4[8], tmp[8];
+        compute_rhs(state, k1);
+        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + 0.5 * dt_local * k1[i];
+        compute_rhs(tmp, k2);
+        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + 0.5 * dt_local * k2[i];
+        compute_rhs(tmp, k3);
+        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_local * k3[i];
+        compute_rhs(tmp, k4);
+        for (int i = 0; i < 8; ++i) {
+            state[i] += (dt_local / 6.0) * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);
+        }
     }
 
     // step_accepted drives the retry loop in operator() below.
-    // state/dlambda/step_accepted/k1 are raw pointers, not C++ references --
-    // see the comment on rk_detail::rk4_step/rk45_step in rk_integrators.hpp.
     KOKKOS_FUNCTION
     void rk45_step(
         real* state,
@@ -164,9 +170,72 @@ struct Geodesic_cartesian_kerr_schild {
         bool* debug_finite_out = nullptr
     ) const
     {
-        rk_detail::rk45_step<8>(state, dlambda, step_accepted, *this, k1,
-                                 atol, rtol, min_step_scale, max_step_scale, safety_factor,
-                                 debug_err_out, debug_finite_out);
+        const real a21 = 1.0 / 4.0;
+        const real a31 = 3.0 / 32.0, a32 = 9.0 / 32.0;
+        const real a41 = 1932.0 / 2197.0, a42 = -7200.0 / 2197.0, a43 = 7296.0 / 2197.0;
+        const real a51 = 439.0 / 216.0, a52 = -8.0, a53 = 3680.0 / 513.0, a54 = -845.0 / 4104.0;
+        const real a61 = -8.0 / 27.0, a62 = 2.0, a63 = -3544.0 / 2565.0, a64 = 1859.0 / 4104.0, a65 = -11.0 / 40.0;
+
+        const real b4_1 = 25.0 / 216.0;
+        const real b4_3 = 1408.0 / 2565.0;
+        const real b4_4 = 2197.0 / 4104.0;
+        const real b4_5 = -1.0 / 5.0;
+        const real b5_1 = 16.0 / 135.0;
+        const real b5_3 = 6656.0 / 12825.0;
+        const real b5_4 = 28561.0 / 56430.0;
+        const real b5_5 = -9.0 / 50.0;
+        const real b5_6 = 2.0 / 55.0;
+
+        const real dt_val = *dlambda;
+        real k2[8], k3[8], k4[8], k5[8], k6[8], tmp[8];
+        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * a21 * k1[i];
+        compute_rhs(tmp, k2);
+        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a31 * k1[i] + a32 * k2[i]);
+        compute_rhs(tmp, k3);
+        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a41 * k1[i] + a42 * k2[i] + a43 * k3[i]);
+        compute_rhs(tmp, k4);
+        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a51 * k1[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
+        compute_rhs(tmp, k5);
+        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a61 * k1[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
+        compute_rhs(tmp, k6);
+
+        real x4[8], x5[8], err = 0.0;
+        bool finite = true;
+        for (int i = 0; i < 8; ++i) {
+            x4[i] = state[i] + dt_val * (b4_1 * k1[i] + b4_3 * k3[i] + b4_4 * k4[i] + b4_5 * k5[i]);
+            x5[i] = state[i] + dt_val * (b5_1 * k1[i] + b5_3 * k3[i] + b5_4 * k4[i] + b5_5 * k5[i] + b5_6 * k6[i]);
+            const real scale_i = atol + rtol * std::max(std::abs(x5[i]), std::abs(x4[i]));
+            const real ratio = std::abs(x5[i] - x4[i]) / scale_i;
+            if (!std::isfinite(x5[i]) || !std::isfinite(ratio)) finite = false;
+            err = std::max(err, ratio);
+        }
+
+        if (debug_err_out) *debug_err_out = err;
+        if (debug_finite_out) *debug_finite_out = finite;
+
+        if (!finite) {
+            *step_accepted = false;
+            *dlambda = dt_val * min_step_scale;
+            return;
+        }
+
+        if (err == 0.0) {
+            *step_accepted = true;
+            *dlambda = dt_val * max_step_scale;
+            for (int i = 0; i < 8; ++i) state[i] = x5[i];
+            return;
+        }
+
+        real scale = safety_factor * std::pow(1.0 / err, 0.25);
+        scale = std::clamp(scale, min_step_scale, max_step_scale);
+        if (err < 1.0) {
+            *step_accepted = true;
+            *dlambda = dt_val * scale;
+            for (int i = 0; i < 8; ++i) state[i] = x5[i];
+        } else {
+            *step_accepted = false;
+            *dlambda = dt_val * scale;
+        }
     }
 
 
