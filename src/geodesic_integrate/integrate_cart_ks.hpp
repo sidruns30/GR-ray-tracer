@@ -164,8 +164,8 @@ struct Geodesic_cartesian_kerr_schild {
         // TEMPORARY: tracing why idx==0's state was observed bit-identical
         // across many steps on an H200 run -- remove once root-caused.
         if (idx == 0) {
-            printf("[GPUDBG] step=%zu enter idx=0 terminate=%d\n",
-                   step_index, static_cast<int>(photon_terminate(idx)));
+            printf("[GPUDBG] step=%llu enter idx=0 terminate=%d\n",
+                   static_cast<unsigned long long>(step_index), static_cast<int>(photon_terminate(idx)));
         }
         if (photon_terminate(idx)) {
             return;
@@ -182,8 +182,8 @@ struct Geodesic_cartesian_kerr_schild {
             photon_k3(idx)
         };
         if (idx == 0) {
-            printf("[GPUDBG] step=%zu idx=0 pre-state t=%.9f x=%.9f y=%.9f z=%.9f kt=%.9f kx=%.9f ky=%.9f kz=%.9f dlambda=%.9e integrator=%d\n",
-                   step_index, state[0], state[1], state[2], state[3],
+            printf("[GPUDBG] step=%llu idx=0 pre-state t=%.9f x=%.9f y=%.9f z=%.9f kt=%.9f kx=%.9f ky=%.9f kz=%.9f dlambda=%.9e integrator=%d\n",
+                   static_cast<unsigned long long>(step_index), state[0], state[1], state[2], state[3],
                    state[4], state[5], state[6], state[7],
                    photon_dlambda(idx), static_cast<int>(integrator));
         }
@@ -230,8 +230,8 @@ struct Geodesic_cartesian_kerr_schild {
         }
 
         if (idx == 0) {
-            printf("[GPUDBG] step=%zu idx=0 post-integrate state t=%.9f x=%.9f y=%.9f z=%.9f kt=%.9f kx=%.9f ky=%.9f kz=%.9f dlambda=%.9e\n",
-                   step_index, state[0], state[1], state[2], state[3],
+            printf("[GPUDBG] step=%llu idx=0 post-integrate state t=%.9f x=%.9f y=%.9f z=%.9f kt=%.9f kx=%.9f ky=%.9f kz=%.9f dlambda=%.9e\n",
+                   static_cast<unsigned long long>(step_index), state[0], state[1], state[2], state[3],
                    state[4], state[5], state[6], state[7], photon_dlambda(idx));
         }
 
