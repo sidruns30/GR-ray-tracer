@@ -1,24 +1,52 @@
 #include "utils.hpp"
 #include "simulation_options.hpp"
+#include "input/toml_config.hpp"
 #include "radiative_transfer/initialize_photons.hpp"
 #include "geodesic_integrate/integrate_cart_ks.hpp"
 #include "output/display.hpp"
 
 
 int main(int argc, char* argv[]) {
-    const auto options = parse_simulation_options(argc, argv);
+    SimulationOptions options;
+    try {
+        options = parse_simulation_options(argc, argv);
+    } catch (const std::exception& e) {
+        ERROR(std::string("Failed to parse command-line arguments: ") + e.what());
+        return 1;
+    }
     output_directory = options.output_dir;
+    // write_output.hpp/observation.hpp build file paths by concatenating
+    // output_directory directly with filenames (no path separator inserted),
+    // so a --output-dir without a trailing slash would otherwise spill files
+    // into the current directory with a mashed-together name instead of the
+    // intended subdirectory.
+    if (!output_directory.empty() && output_directory.back() != '/') {
+        output_directory += '/';
+    }
 
     // Initialize MPI
     int mpi_rank, mpi_size;
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
-    
+
     if (mpi_rank == 0) {
         INIT("=== GR Ray-Trace Initialization ===");
         INFO("MPI processes: " + std::to_string(mpi_size));
     }
+
+    if (!options.config_path.empty()) {
+        try {
+            toml_config::load_and_apply_toml_config(options.config_path);
+        } catch (const std::exception& e) {
+            if (mpi_rank == 0) {
+                ERROR(std::string("Failed to load config file: ") + e.what());
+            }
+            MPI_Finalize();
+            return 1;
+        }
+    }
+
     // Initialize Kokkos
     Kokkos::initialize(argc, argv);
     {
@@ -34,7 +62,23 @@ int main(int argc, char* argv[]) {
         if (paths.temperature.empty()) paths.temperature = "./Tgas.npy";
         if (paths.velocity.empty()) paths.velocity = "./vel.npy";
         if (paths.magnetic.empty()) paths.magnetic = "./mag.npy";
-        const auto fields = load_numpy_field_bundle(paths);
+
+        NumpyFieldViews fields;
+        try {
+            fields = load_numpy_field_bundle(paths);
+        } catch (const std::exception& e) {
+            if (mpi_rank == 0) {
+                ERROR(std::string("Failed to load input grid data: ") + e.what());
+                ERROR("Expected grid files: " + paths.r + ", " + paths.theta + ", " + paths.phi + ", " +
+                      paths.density + ", " + paths.temperature + ", " + paths.velocity + ", " + paths.magnetic);
+                ERROR("Generate example grid data with: python3 src/create_example_data.py --output-dir <dir>, "
+                      "or point at real data with --grid-r/--grid-theta/--grid-phi/--density/--temperature/"
+                      "--velocity/--magnetic.");
+            }
+            Kokkos::finalize();
+            MPI_Finalize();
+            return 1;
+        }
         timers.EndTimer("Load HAMR Data");
 
         // Initialize camera and pixels

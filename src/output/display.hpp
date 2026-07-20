@@ -164,6 +164,11 @@ inline void WARN(const std::string& message) {
     return;
 }
 
+inline void ERROR(const std::string& message) {
+    std::cout << Colors::red << "ERROR: " << message << Colors::reset << std::endl;
+    return;
+}
+
 inline void INFO(const std::string& message) {
     std::cout << Colors::green << "INFO: " << message << Colors::reset << std::endl;
     return;

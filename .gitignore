@@ -1,0 +1,16 @@
+# Build output
+build/
+cmake-build-*/
+
+# Simulation output / generated data (repo-root only -- not src/output/, the source dir)
+/output/
+/outputs/
+*.npy
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Editor/OS
+.DS_Store

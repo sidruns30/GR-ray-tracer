@@ -1,0 +1,45 @@
+# Example gr-ray-trace simulation config.
+# Pass with: ./gr-ray-trace --config config/example.toml
+#
+# Any key omitted here keeps its compiled-in default (see src/utils.cpp).
+# Values shown below ARE those compiled-in defaults, so this file is a no-op
+# copy/paste starting point -- edit the values you actually want to change.
+
+[black_hole]
+mass = 1.0   # M_BH, geometric units
+spin = 1.0   # a_BH; must satisfy |spin| <= mass, i.e. dimensionless spin a/M in [-1, 1] (|a/M| == 1 is extremal)
+
+[camera]
+use_pinhole = false
+use_image = true
+
+theta = 0.7853981633974483   # pi/4, pinhole camera polar angle
+phi = 0.7853981633974483     # pi/4, pinhole camera azimuthal angle
+target_r_min = 0.0
+target_r_max = 2.0
+
+plane_dim1 = 20.0            # image plane extent along theta_hat, in rg/c
+plane_dim2 = 20.0            # image plane extent along phi_hat, in rg/c
+plane_theta = 1.5707963267948966  # pi/2, image plane polar angle
+plane_phi = 0.7853981633974483    # pi/4, image plane azimuthal angle
+
+distance = 10000.0           # camera distance from origin, in rg/c
+
+[photons]
+count = 2000000                   # total photons traced, split across MPI ranks
+
+[integration]
+max_steps = 10000
+termination_percent = 0.9    # stop once this fraction of photons has terminated
+initial_step = 0.1           # initial dlambda guess (scaled by camera_distance)
+atol = 1e-8
+rtol = 1e-8
+
+[termination]
+# Photons terminate once their Kerr-Schild radius leaves [r_min, r_max].
+# Leave commented to default to R_HORIZON and 1.5*camera.distance respectively.
+# r_min = 1.0
+# r_max = 15000.0
+
+[output]
+interval = 500                 # write photon/observation output every N steps
