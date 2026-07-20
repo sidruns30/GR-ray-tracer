@@ -2,6 +2,7 @@
 
 #include "../utils.hpp"
 #include "../metrics/cartesian_kerr_schild.hpp"
+#include "../metrics/kerr_schild_core.hpp"
 
 struct GeodesicObservables {
     real norm = 0.0;
@@ -18,8 +19,7 @@ GeodesicObservables compute_geodesic_observables(const real state[8]) {
     const real x = X[1];
     const real y = X[2];
     const real z = X[3];
-    const real rsq = SQR(x) + SQR(y) + SQR(z);
-    const real r = sqrt(0.5 * (rsq - SQR(a_BH) + sqrt(SQR(rsq - SQR(a_BH)) + 4.0 * SQR(a_BH * z))));
+    const real r = kerr_schild::compute_r(x, y, z);
     const real sin_theta = sqrt(std::max(real(0.0), 1.0 - SQR(z / r)));
     const real cos_theta = z / r;
     const real sin_theta_safe = std::max(real(1e-15), sin_theta);

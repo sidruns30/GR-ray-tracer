@@ -17,7 +17,9 @@ int main() {
     real state_rk45[2] = {1.0, -2.0};
     real dt = 0.5;
     bool accepted = false;
-    rk_detail::rk45_step<2>(state_rk45, dt, accepted, rhs);
+    real k1[2];
+    rhs(state_rk45, k1);
+    rk_detail::rk45_step<2>(state_rk45, dt, accepted, rhs, k1);
     assert(accepted);
     assert(std::abs(state_rk45[0] - 0.0) < 1e-14);
     assert(std::abs(state_rk45[1] + 2.0) < 1e-14);

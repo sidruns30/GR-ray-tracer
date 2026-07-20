@@ -17,6 +17,7 @@
 #include "../output/write_output.hpp"
 #include "../output/display.hpp"
 #include "../metrics/cartesian_kerr_schild.hpp"
+#include "../metrics/kerr_schild_core.hpp"
 #include "../radiative_transfer/observation.hpp"
 #include "../radiative_transfer/scattering.hpp"
 #include "rk_integrators.hpp"
@@ -42,7 +43,8 @@ struct Geodesic_cartesian_kerr_schild {
     real r_min, r_max, theta_min, theta_max, phi_min, phi_max, dlog_r;
     
     size_t nr, ntheta, nphi;
-    const real r_horizon;
+    const real r_term_min;
+    const real r_term_max;
     const ScatteringModel scattering_model;
     const std::size_t step_index;
     const IntegratorType integrator;
@@ -56,7 +58,7 @@ struct Geodesic_cartesian_kerr_schild {
       const Kokkos::View<real***>& Tgas_,
       real r_min_, real r_max_, real theta_min_, real theta_max_,
       real phi_min_, real phi_max_, real dlog_r_, 
-      size_t nr_, size_t ntheta_, size_t nphi_, const real r_horizon_,
+      size_t nr_, size_t ntheta_, size_t nphi_, const real r_term_min_, const real r_term_max_,
       const ScatteringModel& scattering_model_ = ScatteringModel{},
       std::size_t step_index_ = 0,
       IntegratorType integrator_ = IntegratorType::RK45)
@@ -67,93 +69,8 @@ struct Geodesic_cartesian_kerr_schild {
        r(r_), theta(theta_), phi(phi_), rho(rho_), Tgas(Tgas_),
        r_min(r_min_), r_max(r_max_), theta_min(theta_min_), theta_max(theta_max_),
        phi_min(phi_min_), phi_max(phi_max_), dlog_r(dlog_r_),
-       nr(nr_), ntheta(ntheta_), nphi(nphi_), r_horizon(r_horizon_),
+       nr(nr_), ntheta(ntheta_), nphi(nphi_), r_term_min(r_term_min_), r_term_max(r_term_max_),
        scattering_model(scattering_model_), step_index(step_index_), integrator(integrator_) {};
-
-    // Emissivity calculation can be added here as needed
-    KOKKOS_FUNCTION
-    void add_emissivity(real state[8], real& intensity) const {
-        // Find the nearest cell in the grid and add emissivity to intensity
-        real x = state[IX];
-        real y = state[IY];
-        real z = state[IZ];
-        real RSQ = SQR(x) + SQR(y) + SQR(z);
-        real r = sqrt(0.5 * (RSQ - SQR(a_BH) + sqrt(SQR(RSQ - SQR(a_BH)) + 4.0 * SQR(a_BH * z))));
-        real theta = acos(z / r);
-        real phi = (atan2(y, x) - atan2(a_BH, r));
-        if (phi < 0) phi += 2.0*PI;
-
-        size_t ir =  static_cast<size_t>((log(r) - log(r_min)) / dlog_r);
-        size_t itheta = static_cast<size_t>((theta - theta_min) / ((theta_max - theta_min) / ntheta));
-        size_t iphi = static_cast<size_t>((phi - phi_min) / ((phi_max - phi_min) / nphi));
-
-        // Bounds checking with proper range check
-        if (r > r_min && r < r_max &&
-            theta > theta_min && theta < theta_max &&
-            phi > phi_min && phi < phi_max &&
-            ir < nr && itheta < ntheta && iphi < nphi
-        ) {
-            intensity += rho(ir, itheta, iphi) * (Tgas(ir, itheta, iphi));
-        }
-        else
-        {
-            intensity += 0.0;
-        }
-    }
-    
-    KOKKOS_FUNCTION
-    void compute_inverse_metric(const real X[4], real ginv[4][4]) const {
-        for (int a=0;a<4;++a) for (int b=0;b<4;++b) ginv[a][b] = 0.0;
-        real x = X[1];
-        real y = X[2];
-        real z = X[3];
-        real RSQ = SQR(x) + SQR(y) + SQR(z);
-        real r = sqrt(0.5 * (RSQ - SQR(a_BH) + sqrt(SQR(RSQ - SQR(a_BH)) + 4.0 * SQR(a_BH * z))));
-        ginv[0][0] = (-2*M_BH*CUBE(r) - SQR(a_BH * z) - QUAD(r))/(SQR(a_BH * z)+ QUAD(r));
-        ginv[0][1] = 2*M_BH*CUBE(r)*(a_BH * y + r * x)/((SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[0][2] = -2*M_BH*CUBE(r)*(a_BH * x - r * y)/((SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[0][3] = 2*M_BH*SQR(r)*z/(SQR(a_BH * z) + QUAD(r));
-        ginv[1][0] = 2*M_BH*CUBE(r)*(a_BH * y + r * x)/((SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[1][1] = (-2*M_BH*CUBE(r)*SQR(a_BH * y + r * x) + SQR(SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)))/ (SQR(SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[1][2] = 2*M_BH*CUBE(r)*(a_BH * x - r * y)*(a_BH * y + r * x)/(SQR(SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[1][3] = -2*M_BH*SQR(r)*z*(a_BH * y + r * x)/((SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[2][0] = -2*M_BH*CUBE(r)*(a_BH * x - r * y)/((SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[2][1] = 2*M_BH*CUBE(r)*(a_BH * x - r * y)*(a_BH * y + r * x)/(SQR(SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[2][2] = (-2*M_BH*CUBE(r)*SQR(a_BH * x - r * y) + SQR(SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)))/(SQR(SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[2][3] = 2*M_BH*SQR(r)*z*(a_BH * x - r * y)/((SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[3][0] = 2*M_BH*SQR(r)*z/(SQR(a_BH * z) + QUAD(r));
-        ginv[3][1] = -2*M_BH*SQR(r)*z*(a_BH * y + r * x)/((SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[3][2] = 2*M_BH*SQR(r)*z*(a_BH * x - r * y)/((SQR(a_BH) + SQR(r))*(SQR(a_BH * z) + QUAD(r)));
-        ginv[3][3] = (-2*M_BH*r*SQR(z) + SQR(a_BH * z) + QUAD(r))/(SQR(a_BH * z) + QUAD(r));
-        return;
-    }
-
-    KOKKOS_FUNCTION
-    void compute_inverse_metric_deriv(const real X[4],
-                                      real dginv[4][4][4]) const
-    {
-        real ginv[4][4];
-        // Second order finite differencing for metric
-        for (int mu=0; mu<4; ++mu) {
-            real X_ph[4] = {X[0], X[1], X[2], X[3]};
-            real X_mh[4] = {X[0], X[1], X[2], X[3]};
-            X_ph[mu] += metric_derivative_h;
-            X_mh[mu] -= metric_derivative_h;
-            compute_inverse_metric(X_ph, ginv);
-            real ginv_ph[4][4];
-            for (int a=0;a<4;++a) for (int b=0;b<4;++b) ginv_ph[a][b] = ginv[a][b];
-            compute_inverse_metric(X_mh, ginv);
-            real ginv_mh[4][4];
-            for (int a=0;a<4;++a) for (int b=0;b<4;++b) ginv_mh[a][b] = ginv[a][b];
-            for (int a=0;a<4;++a) {
-                for (int b=0;b<4;++b) {
-                    dginv[mu][a][b] = (ginv_ph[a][b] - ginv_mh[a][b]) / (2.0 * metric_derivative_h);
-                }
-            }
-        }
-        return;
-    }
-
 
     KOKKOS_FUNCTION
     void compute_rhs(const real state[8], real dstates[8]) const {
@@ -169,8 +86,8 @@ struct Geodesic_cartesian_kerr_schild {
         p_cov[3] = state[IKZ];
         real ginv[4][4];
         real dginv[4][4][4];
-        compute_inverse_metric(x, ginv);
-        compute_inverse_metric_deriv(x, dginv);
+        kerr_schild::compute_inverse_metric(x, ginv);
+        kerr_schild::compute_inverse_metric_deriv(x, dginv);
         real p_contra[4];
         for (int mu=0; mu<4; ++mu) {
           real sum = 0.0;
@@ -199,20 +116,20 @@ struct Geodesic_cartesian_kerr_schild {
         rk_detail::rk4_step<8>(state, dt_local, rhs);
     }
 
-    // Siddhant: This computes the error as well but I choose not to use it for now
-    // In the future, we can output the error as well
+    // step_accepted drives the retry loop in operator() below.
     KOKKOS_FUNCTION
     void rk45_step(
         real (&state)[8],
         real& dlambda,
-        bool& step_accepted
+        bool& step_accepted,
+        const real (&k1)[8]
     ) const
     {
         const auto* self = this;
         auto rhs = KOKKOS_LAMBDA(const real in[8], real out[8]) {
             self->compute_rhs(in, out);
         };
-        rk_detail::rk45_step<8>(state, dlambda, step_accepted, rhs);
+        rk_detail::rk45_step<8>(state, dlambda, step_accepted, rhs, k1);
     }
 
 
@@ -233,12 +150,8 @@ struct Geodesic_cartesian_kerr_schild {
             photon_k3(idx)
         };
         // Compute distance traveled for adaptive step sizing if needed
-        real x = state[IX];
-        real y = state[IY];
-        real z = state[IZ];
-        real RSQ = SQR(x) + SQR(y) + SQR(z);
-        real photon_distance = sqrt(0.5 * (RSQ - SQR(a_BH) + sqrt(SQR(RSQ - SQR(a_BH)) + 4.0 * SQR(a_BH * z))));
-        if (photon_distance <= r_horizon || photon_distance > 1.5 * camera_distance) {
+        real photon_distance = kerr_schild::compute_r(state[IX], state[IY], state[IZ]);
+        if (photon_distance <= r_term_min || photon_distance > r_term_max) {
             photon_terminate(idx) = true;
             return;}
         
@@ -249,8 +162,12 @@ struct Geodesic_cartesian_kerr_schild {
             bool step_accepted = false;
             int max_attempts = 20;
             int attempts = 0;
+            // state (hence k1 = compute_rhs(state)) is unchanged across rejected
+            // retries -- only dlambda shrinks -- so k1 is computed once and reused.
+            real k1[8];
+            compute_rhs(state, k1);
             while (!step_accepted && attempts < max_attempts) {
-                rk45_step(state, photon_dlambda(idx), step_accepted);
+                rk45_step(state, photon_dlambda(idx), step_accepted, k1);
                 attempts++;
             }
             if (!step_accepted) {
@@ -279,10 +196,6 @@ struct Geodesic_cartesian_kerr_schild {
         photon_Q(idx) = stokes[1];
         photon_U(idx) = stokes[2];
         photon_V(idx) = stokes[3];
-        // Add emissivity to intensity
-        //real intensity = photon_I(idx);
-        //add_emissivity(state, intensity);
-        //photon_I(idx) = intensity;
         return;
     }
 };
@@ -302,13 +215,14 @@ inline void integrate_geodesics(
 {
     float termination_fraction = 0.0f;
     const size_t num_photons = photons.x0.extent(0);
-    timers.AddTimer({"Geodesic Integration", "Norm Calculation", "MPI Counts Send/Recv", "Active Photons Calc",  "Output"});
+    timers.AddTimer({"Geodesic Integration", "MPI Counts Send/Recv", "Active Photons Calc",  "Output"});
     for (auto current_step = 0; current_step < max_steps; current_step++)
     {
         timers.BeginTimer("Geodesic Integration");
         Geodesic_cartesian_kerr_schild step_functor(photons, r, theta, phi, rho, Tgas,
             r_min, r_max, theta_min, theta_max, phi_min, phi_max, dlog_r, nr, ntheta, nphi,
-            R_HORIZON, scattering_model, static_cast<std::size_t>(current_step), integrator);
+            termination_r_min, termination_r_max, scattering_model,
+            static_cast<std::size_t>(current_step), integrator);
         Kokkos::parallel_for(
         "RK4 Cartesian Kerr-Schild Step",
         Kokkos::RangePolicy<>(0, num_photons),

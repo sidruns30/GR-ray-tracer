@@ -19,10 +19,14 @@ inline void rk4_step(real (&state)[N], real dt, const RHS& rhs) {
     }
 }
 
+// k1 = rhs(state) is identical across rejected retries of the same step (only dt
+// changes, state doesn't), so the caller computes it once and passes it in here
+// instead of it being recomputed on every retry.
 template <std::size_t N, typename RHS>
-inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs,
-                      real tolerance = tol, real min_step_scale = min_scale,
-                      real max_step_scale = max_scale, real safety_factor = safety) {
+inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs, const real (&k1)[N],
+                      real atol = atol_default, real rtol_ = rtol_default,
+                      real min_step_scale = min_scale, real max_step_scale = max_scale,
+                      real safety_factor = safety) {
     const real a21 = 1.0 / 4.0;
     const real a31 = 3.0 / 32.0, a32 = 9.0 / 32.0;
     const real a41 = 1932.0 / 2197.0, a42 = -7200.0 / 2197.0, a43 = 7296.0 / 2197.0;
@@ -39,8 +43,7 @@ inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs
     const real b5_5 = -9.0 / 50.0;
     const real b5_6 = 2.0 / 55.0;
 
-    real k1[N], k2[N], k3[N], k4[N], k5[N], k6[N], tmp[N];
-    rhs(state, k1);
+    real k2[N], k3[N], k4[N], k5[N], k6[N], tmp[N];
     for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt * a21 * k1[i];
     rhs(tmp, k2);
     for (std::size_t i = 0; i < N; ++i) tmp[i] = state[i] + dt * (a31 * k1[i] + a32 * k2[i]);
@@ -56,7 +59,10 @@ inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs
     for (std::size_t i = 0; i < N; ++i) {
         x4[i] = state[i] + dt * (b4_1 * k1[i] + b4_3 * k3[i] + b4_4 * k4[i] + b4_5 * k5[i]);
         x5[i] = state[i] + dt * (b5_1 * k1[i] + b5_3 * k3[i] + b5_4 * k4[i] + b5_5 * k5[i] + b5_6 * k6[i]);
-        err = std::max(err, std::abs(x5[i] - x4[i]));
+        // Mixed relative/absolute error norm -- position components (~1e4) and
+        // momentum components (~1) no longer share one absolute tolerance.
+        const real scale_i = atol + rtol_ * std::max(std::abs(x5[i]), std::abs(x4[i]));
+        err = std::max(err, std::abs(x5[i] - x4[i]) / scale_i);
     }
 
     if (err == 0.0) {
@@ -66,9 +72,9 @@ inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs
         return;
     }
 
-    real scale = safety_factor * std::pow(tolerance / err, 0.25);
+    real scale = safety_factor * std::pow(1.0 / err, 0.25);
     scale = std::clamp(scale, min_step_scale, max_step_scale);
-    if (err < tolerance) {
+    if (err < 1.0) {
         accepted = true;
         dt *= scale;
         for (std::size_t i = 0; i < N; ++i) state[i] = x5[i];

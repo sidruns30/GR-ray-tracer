@@ -12,6 +12,7 @@
 
 #include "../utils.hpp"
 #include "../metrics/cartesian_kerr_schild.hpp"
+#include "../metrics/kerr_schild_core.hpp"
 
 
 
@@ -46,10 +47,17 @@ inline void initialize_photons_pinhole(
             photons.x1(i)  = cam_x;
             photons.x2(i)  = cam_y;
             photons.x3(i)  = cam_z;
-            photons.k0(i)  = 1.0;
-            photons.k1(i)  = kx / k_norm;
-            photons.k2(i)  = ky / k_norm;
-            photons.k3(i)  = kz / k_norm;
+            // Build a genuinely null contravariant wavevector at (0,cam_x,cam_y,cam_z)
+            // with this spatial direction, then lower it to the covariant p_mu that
+            // compute_rhs actually propagates (see kerr_schild_core.hpp).
+            const real X[4] = {0.0, cam_x, cam_y, cam_z};
+            const real K_spatial[3] = {kx / k_norm, ky / k_norm, kz / k_norm};
+            real p_cov[4];
+            kerr_schild::null_covariant_momentum_from_spatial_direction(X, K_spatial, p_cov);
+            photons.k0(i)  = p_cov[0];
+            photons.k1(i)  = p_cov[1];
+            photons.k2(i)  = p_cov[2];
+            photons.k3(i)  = p_cov[3];
             photons.I(i)  = 0.0;
             photons.Q(i)  = 0.0;
             photons.U(i)  = 0.0;
@@ -117,10 +125,17 @@ inline void initialize_photons_image_camera(
             photons.x1(i)  = photon_x;
             photons.x2(i)  = photon_y;
             photons.x3(i)  = photon_z;
-            photons.k0(i)  = 1.0;
-            photons.k1(i)  = kx;
-            photons.k2(i)  = ky;
-            photons.k3(i)  = kz;
+            // Build a genuinely null contravariant wavevector at (0,photon_x,photon_y,photon_z)
+            // with this spatial direction, then lower it to the covariant p_mu that
+            // compute_rhs actually propagates (see kerr_schild_core.hpp).
+            const real X[4] = {0.0, photon_x, photon_y, photon_z};
+            const real K_spatial[3] = {kx, ky, kz};
+            real p_cov[4];
+            kerr_schild::null_covariant_momentum_from_spatial_direction(X, K_spatial, p_cov);
+            photons.k0(i)  = p_cov[0];
+            photons.k1(i)  = p_cov[1];
+            photons.k2(i)  = p_cov[2];
+            photons.k3(i)  = p_cov[3];
             photons.I(i)  = 0.0;
             photons.Q(i)  = 0.0;
             photons.U(i)  = 0.0;

@@ -14,11 +14,13 @@
 #include "cnpy.h"
 
 using real = double;
-// Global variables: don't change these
 inline constexpr real PI = 3.14159265358979323846;
-inline constexpr real M_BH = 1.0; // Black hole mass in geometric units
-inline constexpr real a_BH = 1.0;    // Black hole spin parameter (0 <= a < 1)
-inline const real R_HORIZON = M_BH + sqrt(M_BH * M_BH - a_BH * a_BH); // Event horizon radius
+// Physics/simulation parameters below are runtime-configurable (see
+// src/input/toml_config.hpp) -- these are just their built-in defaults,
+// used verbatim when no --config TOML file is given.
+extern real M_BH; // Black hole mass in geometric units
+extern real a_BH; // Black hole spin parameter; must satisfy |a_BH| <= M_BH (|a_BH| == M_BH is extremal)
+extern real R_HORIZON; // Event horizon radius = M_BH + sqrt(M_BH^2 - a_BH^2), recomputed on config load
 inline constexpr size_t IT = 0;
 inline constexpr size_t IX = 1;
 inline constexpr size_t IY = 2;
@@ -27,7 +29,6 @@ inline constexpr size_t IKT = 4;
 inline constexpr size_t IKX = 5;
 inline constexpr size_t IKY = 6;
 inline constexpr size_t IKZ = 7;
-inline constexpr size_t IW = 8;
 KOKKOS_INLINE_FUNCTION
 constexpr real SQR(const real x) { return x * x; }
 KOKKOS_INLINE_FUNCTION
@@ -120,40 +121,47 @@ extern real phi_max;
 extern real dlog_r;
 
 // Parameters for a pinhole camera setup
-inline constexpr bool use_pinhole_camera = false;
-inline constexpr real camera_theta = PI / 4.0;     // Polar angle of camera position
-inline constexpr real camera_phi = PI / 4.0;       // Azimuthal angle of camera position
-inline constexpr real target_rmin = 0.0;          // Minimum radius for photon targeting
-inline constexpr real target_rmax = 2.0;          // Maximum radius for photon targeting
+extern bool use_pinhole_camera;
+extern real camera_theta;      // Polar angle of camera position
+extern real camera_phi;        // Azimuthal angle of camera position
+extern real target_rmin;       // Minimum radius for photon targeting
+extern real target_rmax;       // Maximum radius for photon targeting
 
 // Parameters for image camera setup
-inline constexpr bool use_image_camera = true;
-inline constexpr real plane_dim1 = 20.0;        // Dimension 1 of image plane in (rg/c)
-inline constexpr real plane_dim2 = 20.0;        // Dimension 2 of image plane in (rg/c)
-inline constexpr real plane_theta = PI / 2.0;    // Polar angle of image plane
-inline constexpr real plane_phi = PI / 4.0;       // Azimuthal angle of image plane
+extern bool use_image_camera;
+extern real plane_dim1;        // Dimension 1 of image plane in (rg/c)
+extern real plane_dim2;        // Dimension 2 of image plane in (rg/c)
+extern real plane_theta;       // Polar angle of image plane
+extern real plane_phi;         // Azimuthal angle of image plane
 
 // Parameters for both
-inline constexpr real camera_distance = 10000.0;   // Distance of camera from origin in rg/c
+extern real camera_distance;   // Distance of camera from origin in rg/c
 
 // Number of photons to trace
-inline constexpr int nphotons = 20;
-inline constexpr int max_steps = 10000;
+extern int nphotons;
+extern int max_steps;
 
 // Parameters for geodesic integration
-inline constexpr real metric_derivative_h = 1e-6;
-inline constexpr real termination_percent = 0.9;
+extern real termination_percent;
+
+// Photons terminate once their Kerr-Schild radius leaves [termination_r_min, termination_r_max].
+// Default to R_HORIZON / 1.5*camera_distance respectively unless overridden (see toml_config.hpp).
+extern real termination_r_min;
+extern real termination_r_max;
 
 enum class IntegratorType : int { RK4 = 0, RK45 = 1 };
 
 // RK45 parameters
-inline constexpr real dlambda = 0.1; // Siddhant: this is just an initial guess, will be adapted
-inline constexpr real tol = 1e-8;
-// Siddhant: for adaptive step sizing, better not change. 
+extern real dlambda; // Siddhant: this is just an initial guess, will be adapted
+// Mixed relative/absolute error norm: err_i = |x5_i - x4_i| / (atol + rtol*|x_i|).
+// atol dominates for near-zero components (e.g. momentum crossing zero), rtol for large ones (e.g. position ~1e4).
+extern real atol_default;
+extern real rtol_default;
+// Siddhant: for adaptive step sizing, better not change. Not exposed via TOML config.
 inline constexpr real safety = 0.9;
 inline constexpr real min_scale = 0.01;
 inline constexpr real max_scale = 10.0;
 
 // Parameters for output
-inline constexpr size_t output_interval = 1;
+extern size_t output_interval;
 inline std::string output_directory = "./output/";
