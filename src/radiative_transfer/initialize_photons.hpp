@@ -36,13 +36,14 @@ inline void initialize_photons_pinhole(
     const real a_BH_ = a_BH;
     const real M_BH_ = M_BH;
     const real dlambda_init = dlambda;
+    const real pinhole_aperture_radius_ = pinhole_aperture_radius;
     Kokkos::Random_XorShift64_Pool<> rand_pool(12345 + mpi_rank);
     Kokkos::parallel_for(
         "InitPhotons",
         Kokkos::RangePolicy<>(0, photons_per_process),
         KOKKOS_LAMBDA(int i) {
             auto rand_gen = rand_pool.get_state();
-            real r   = rand_gen.drand(0.0, pinhole_aperture_radius);
+            real r   = rand_gen.drand(0.0, pinhole_aperture_radius_);
             real phi = rand_gen.drand(0, 2.0 * PI);
             real screen_u = r * cos(phi);
             real screen_v = r * sin(phi);

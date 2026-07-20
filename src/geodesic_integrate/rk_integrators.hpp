@@ -22,11 +22,15 @@ inline void rk4_step(real (&state)[N], real dt, const RHS& rhs) {
 // k1 = rhs(state) is identical across rejected retries of the same step (only dt
 // changes, state doesn't), so the caller computes it once and passes it in here
 // instead of it being recomputed on every retry.
+//
+// atol/rtol_/etc. must be passed explicitly rather than defaulted from the
+// globals of the same name: atol_default/rtol_default are runtime-configurable
+// `extern real` globals with no device-side symbol, so reading them by name
+// (even as a default-argument initializer) fails to compile for a GPU backend
+// with "identifier undefined in device code" -- see kerr_schild_core.hpp.
 template <std::size_t N, typename RHS>
 inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs, const real (&k1)[N],
-                      real atol = atol_default, real rtol_ = rtol_default,
-                      real min_step_scale = min_scale, real max_step_scale = max_scale,
-                      real safety_factor = safety) {
+                      real atol, real rtol_, real min_step_scale, real max_step_scale, real safety_factor) {
     const real a21 = 1.0 / 4.0;
     const real a31 = 3.0 / 32.0, a32 = 9.0 / 32.0;
     const real a41 = 1932.0 / 2197.0, a42 = -7200.0 / 2197.0, a43 = 7296.0 / 2197.0;

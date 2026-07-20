@@ -50,6 +50,14 @@ struct Geodesic_cartesian_kerr_schild {
     // -- see the comment in kerr_schild_core.hpp.
     const real a_BH;
     const real M_BH;
+    // Same capture-by-value reasoning as a_BH/M_BH above, for rk45_step's
+    // tolerance/scale parameters (rk_integrators.hpp no longer defaults them
+    // from atol_default/rtol_default directly).
+    const real atol;
+    const real rtol;
+    const real min_step_scale;
+    const real max_step_scale;
+    const real safety_factor;
     const ScatteringModel scattering_model;
     const std::size_t step_index;
     const IntegratorType integrator;
@@ -65,6 +73,7 @@ struct Geodesic_cartesian_kerr_schild {
       real phi_min_, real phi_max_, real dlog_r_,
       size_t nr_, size_t ntheta_, size_t nphi_, const real r_term_min_, const real r_term_max_,
       real a_BH_, real M_BH_,
+      real atol_, real rtol_, real min_step_scale_, real max_step_scale_, real safety_factor_,
       const ScatteringModel& scattering_model_ = ScatteringModel{},
       std::size_t step_index_ = 0,
       IntegratorType integrator_ = IntegratorType::RK45)
@@ -77,6 +86,8 @@ struct Geodesic_cartesian_kerr_schild {
        phi_min(phi_min_), phi_max(phi_max_), dlog_r(dlog_r_),
        nr(nr_), ntheta(ntheta_), nphi(nphi_), r_term_min(r_term_min_), r_term_max(r_term_max_),
        a_BH(a_BH_), M_BH(M_BH_),
+       atol(atol_), rtol(rtol_), min_step_scale(min_step_scale_), max_step_scale(max_step_scale_),
+       safety_factor(safety_factor_),
        scattering_model(scattering_model_), step_index(step_index_), integrator(integrator_) {};
 
     KOKKOS_FUNCTION
@@ -136,7 +147,8 @@ struct Geodesic_cartesian_kerr_schild {
         auto rhs = KOKKOS_LAMBDA(const real in[8], real out[8]) {
             self->compute_rhs(in, out);
         };
-        rk_detail::rk45_step<8>(state, dlambda, step_accepted, rhs, k1);
+        rk_detail::rk45_step<8>(state, dlambda, step_accepted, rhs, k1,
+                                 atol, rtol, min_step_scale, max_step_scale, safety_factor);
     }
 
 
@@ -240,8 +252,9 @@ inline void integrate_geodesics(
         timers.BeginTimer("Geodesic Integration");
         Geodesic_cartesian_kerr_schild step_functor(photons, r, theta, phi, rho, Tgas,
             r_min, r_max, theta_min, theta_max, phi_min, phi_max, dlog_r, nr, ntheta, nphi,
-            termination_r_min, termination_r_max, a_BH, M_BH, scattering_model,
-            static_cast<std::size_t>(current_step), integrator);
+            termination_r_min, termination_r_max, a_BH, M_BH,
+            atol_default, rtol_default, min_scale, max_scale, safety,
+            scattering_model, static_cast<std::size_t>(current_step), integrator);
         Kokkos::parallel_for(
         "RK4 Cartesian Kerr-Schild Step",
         Kokkos::RangePolicy<>(0, num_photons),
