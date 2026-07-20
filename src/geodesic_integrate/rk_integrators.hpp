@@ -30,7 +30,11 @@ inline void rk4_step(real (&state)[N], real dt, const RHS& rhs) {
 // with "identifier undefined in device code" -- see kerr_schild_core.hpp.
 template <std::size_t N, typename RHS>
 inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs, const real (&k1)[N],
-                      real atol, real rtol_, real min_step_scale, real max_step_scale, real safety_factor) {
+                      real atol, real rtol_, real min_step_scale, real max_step_scale, real safety_factor,
+                      // Optional diagnostics: when non-null, the computed err/finite
+                      // are written back regardless of accept/reject, so a caller can
+                      // log why a specific retry attempt failed.
+                      real* debug_err_out = nullptr, bool* debug_finite_out = nullptr) {
     const real a21 = 1.0 / 4.0;
     const real a31 = 3.0 / 32.0, a32 = 9.0 / 32.0;
     const real a41 = 1932.0 / 2197.0, a42 = -7200.0 / 2197.0, a43 = 7296.0 / 2197.0;
@@ -75,6 +79,9 @@ inline void rk45_step(real (&state)[N], real& dt, bool& accepted, const RHS& rhs
         if (!std::isfinite(x5[i]) || !std::isfinite(ratio)) finite = false;
         err = std::max(err, ratio);
     }
+
+    if (debug_err_out) *debug_err_out = err;
+    if (debug_finite_out) *debug_finite_out = finite;
 
     if (!finite) {
         accepted = false;

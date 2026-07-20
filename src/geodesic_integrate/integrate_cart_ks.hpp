@@ -147,7 +147,9 @@ struct Geodesic_cartesian_kerr_schild {
         real (&state)[8],
         real& dlambda,
         bool& step_accepted,
-        const real (&k1)[8]
+        const real (&k1)[8],
+        real* debug_err_out = nullptr,
+        bool* debug_finite_out = nullptr
     ) const
     {
         const auto* self = this;
@@ -155,7 +157,8 @@ struct Geodesic_cartesian_kerr_schild {
             self->compute_rhs(in, out);
         };
         rk_detail::rk45_step<8>(state, dlambda, step_accepted, rhs, k1,
-                                 atol, rtol, min_step_scale, max_step_scale, safety_factor);
+                                 atol, rtol, min_step_scale, max_step_scale, safety_factor,
+                                 debug_err_out, debug_finite_out);
     }
 
 
@@ -229,7 +232,17 @@ struct Geodesic_cartesian_kerr_schild {
             real k1[8];
             compute_rhs(state, k1);
             while (!step_accepted && attempts < max_attempts) {
-                rk45_step(state, photon_dlambda(idx), step_accepted, k1);
+                if (idx == 0) {
+                    real dbg_err = -1.0;
+                    bool dbg_finite = true;
+                    real dt_before = photon_dlambda(idx);
+                    rk45_step(state, photon_dlambda(idx), step_accepted, k1, &dbg_err, &dbg_finite);
+                    printf("[GPUDBG] step=%llu idx=0 rk45 attempt=%d dt_before=%.9e dt_after=%.9e err=%.9e finite=%d accepted=%d\n",
+                           static_cast<unsigned long long>(step_index), attempts, dt_before, photon_dlambda(idx),
+                           dbg_err, static_cast<int>(dbg_finite), static_cast<int>(step_accepted));
+                } else {
+                    rk45_step(state, photon_dlambda(idx), step_accepted, k1);
+                }
                 attempts++;
             }
             if (!step_accepted) {
