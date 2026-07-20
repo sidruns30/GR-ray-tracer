@@ -1,12 +1,14 @@
 #include "utils.hpp"
-#include "utils.cpp"
-#include "input/load_python_arrays.hpp"
+#include "simulation_options.hpp"
 #include "radiative_transfer/initialize_photons.hpp"
 #include "geodesic_integrate/integrate_cart_ks.hpp"
 #include "output/display.hpp"
 
 
 int main(int argc, char* argv[]) {
+    const auto options = parse_simulation_options(argc, argv);
+    output_directory = options.output_dir;
+
     // Initialize MPI
     int mpi_rank, mpi_size;
     MPI_Init(&argc, &argv);
@@ -24,12 +26,15 @@ int main(int argc, char* argv[]) {
 
         timers.AddTimer("Load HAMR Data");
         timers.BeginTimer("Load HAMR Data");
-        // Load the HAMR data from numpy files into Kokkos views
-        Kokkos::View<real*> r, theta, phi;
-        Kokkos::View<real***>  rho, bsqr, pgas, Tgas, ug;
-        Kokkos::View<real****> bu, uu;
-        std::string base_path = "/home/siddhant/scratch/rayTracingTestData/";
-        load_hamr_numpy_arrays(base_path, r, theta, phi, rho, bsqr, pgas, Tgas, ug, bu, uu);
+        NumpyFieldPaths paths = options.fields;
+        if (paths.r.empty()) paths.r = "./r.npy";
+        if (paths.theta.empty()) paths.theta = "./theta.npy";
+        if (paths.phi.empty()) paths.phi = "./phi.npy";
+        if (paths.density.empty()) paths.density = "./rho.npy";
+        if (paths.temperature.empty()) paths.temperature = "./Tgas.npy";
+        if (paths.velocity.empty()) paths.velocity = "./vel.npy";
+        if (paths.magnetic.empty()) paths.magnetic = "./mag.npy";
+        const auto fields = load_numpy_field_bundle(paths);
         timers.EndTimer("Load HAMR Data");
 
         // Initialize camera and pixels
@@ -90,8 +95,15 @@ int main(int argc, char* argv[]) {
         // Integrate geodesics
         integrate_geodesics(
             photons,
-            r, theta, phi, rho, Tgas, 
-            mpi_rank, timers
+            fields.r, fields.theta, fields.phi, fields.density, fields.temperature,
+            mpi_rank, timers,
+            ScatteringModel{
+                options.enable_scattering,
+                options.scattering_optical_depth,
+                options.scattering_albedo,
+                12345u
+            },
+            options.integrator
             );
     }
     Kokkos::fence();
@@ -103,4 +115,3 @@ int main(int argc, char* argv[]) {
     std::cout << "MPI finalize called from rank " << mpi_rank << std::endl;
     return 0;
 }
-

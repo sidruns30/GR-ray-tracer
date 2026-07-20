@@ -4,7 +4,6 @@
 */
 #pragma once
 #include "../utils.hpp"
-#include "../utils.cpp"
 
 // Siddhant: Input is a *covariant* 4-vector V_mu at position X^mu
 KOKKOS_INLINE_FUNCTION
@@ -43,7 +42,7 @@ real cartesian_kerr_schild_norm(const real X[4], const real V[4]) {
 }
 
 // Kernel to compute the norm of a 4-vector in Cartesian Kerr-Schild coordinates
-void compute_cartesian_kerr_schild_norms(
+inline void compute_cartesian_kerr_schild_norms(
     const Kokkos::View<real*>& x0,
     const Kokkos::View<real*>& x1,
     const Kokkos::View<real*>& x2,

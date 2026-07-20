@@ -1,60 +1,53 @@
-cmake_minimum_required(VERSION 3.16)
-project(gr-ray-trace LANGUAGES CXX)
+find_package(MPI REQUIRED COMPONENTS CXX)
 
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Find required packages
-find_package(MPI REQUIRED)
-find_package(OpenMP REQUIRED)
-find_package(Kokkos REQUIRED)
-
-# cnpy is typically found via find_package or as a subdirectory
-# If cnpy is installed system-wide, you can use find_package
-# Otherwise, you may need to add it as a subdirectory or specify include/lib paths
-# For this example, we assume it's installed or available via pkg-config
-find_library(CNPY_LIBRARY NAMES cnpy)
-find_path(CNPY_INCLUDE_DIR NAMES cnpy.h)
-
-# Create executable
-add_executable(gr-ray-trace main.cpp)
-
-# Link libraries
-target_link_libraries(gr-ray-trace
-    PRIVATE
-        MPI::MPI_CXX
-        OpenMP::OpenMP_CXX
-        Kokkos::kokkos
-)
-
-# If cnpy was found, link it
-if(CNPY_LIBRARY AND CNPY_INCLUDE_DIR)
-    target_include_directories(gr-ray-trace PRIVATE ${CNPY_INCLUDE_DIR})
-    # Expose headers to the target (for IDEs and INSTALL/EXPORT visibility)
-    # Adjust paths if your headers live in a different directory (e.g. include/)
-    target_sources(gr-ray-trace PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/utils.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/input/load_python_arrays.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/geodesic_integrate/integrate_cart_ks.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/radiative_transfer/initialize_photons.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/metrics/cartesian_kerr_schild.hpp
-    )
-    target_link_libraries(gr-ray-trace PRIVATE ${CNPY_LIBRARY})
-    target_link_libraries(gr-ray-trace PRIVATE z)  # cnpy requires zlib
-else()
-    message(WARNING "cnpy library not found. Please install cnpy or specify CNPY_LIBRARY and CNPY_INCLUDE_DIR")
-    # You can uncomment the following lines to specify custom paths
-    # set(CNPY_INCLUDE_DIR "/path/to/cnpy/include")
-    # set(CNPY_LIBRARY "/path/to/cnpy/lib/libcnpy.a")
-    # target_include_directories(gr-ray-trace PRIVATE ${CNPY_INCLUDE_DIR})
-    # target_link_libraries(gr-ray-trace PRIVATE ${CNPY_LIBRARY} z)
+if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "AppleClang")
+    find_program(BREW_EXECUTABLE brew)
+    if(BREW_EXECUTABLE)
+        execute_process(
+            COMMAND ${BREW_EXECUTABLE} --prefix kokkos
+            OUTPUT_VARIABLE KOKKOS_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(KOKKOS_PREFIX)
+            list(APPEND CMAKE_PREFIX_PATH "${KOKKOS_PREFIX}")
+        endif()
+        execute_process(
+            COMMAND ${BREW_EXECUTABLE} --prefix libomp
+            OUTPUT_VARIABLE LIBOMP_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(LIBOMP_PREFIX)
+            set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -I${LIBOMP_PREFIX}/include" CACHE STRING "" FORCE)
+            set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I${LIBOMP_PREFIX}/include" CACHE STRING "" FORCE)
+            set(OpenMP_C_LIB_NAMES "omp" CACHE STRING "" FORCE)
+            set(OpenMP_CXX_LIB_NAMES "omp" CACHE STRING "" FORCE)
+            set(OpenMP_omp_LIBRARY "${LIBOMP_PREFIX}/lib/libomp.dylib" CACHE FILEPATH "" FORCE)
+        endif()
+    endif()
 endif()
 
-# Print build configuration
-message(STATUS "=== Build Configuration ===")
-message(STATUS "MPI Found: ${MPI_FOUND}")
-message(STATUS "OpenMP Found: ${OpenMP_FOUND}")
-message(STATUS "Kokkos Found: ${Kokkos_FOUND}")
-message(STATUS "cnpy Library: ${CNPY_LIBRARY}")
-message(STATUS "cnpy Include: ${CNPY_INCLUDE_DIR}")
+find_package(OpenMP REQUIRED)
+find_package(Kokkos REQUIRED CONFIG)
+
+add_library(grraytracer_core STATIC utils.cpp)
+target_include_directories(grraytracer_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(grraytracer_core PUBLIC MPI::MPI_CXX OpenMP::OpenMP_CXX Kokkos::kokkos)
+
+add_executable(gr-ray-trace main.cpp)
+target_link_libraries(gr-ray-trace PRIVATE grraytracer_core)
+
+if(BUILD_TESTING)
+    add_executable(test_npy_loader tests/test_npy_loader.cpp)
+    target_link_libraries(test_npy_loader PRIVATE grraytracer_core)
+    add_test(NAME npy_loader COMMAND test_npy_loader)
+
+    add_executable(test_geodesic_observables tests/test_geodesic_observables.cpp)
+    target_link_libraries(test_geodesic_observables PRIVATE grraytracer_core)
+    add_test(NAME geodesic_observables COMMAND test_geodesic_observables)
+
+    add_executable(test_rk_integrators tests/test_rk_integrators.cpp)
+    target_link_libraries(test_rk_integrators PRIVATE grraytracer_core)
+    add_test(NAME rk_integrators COMMAND test_rk_integrators)
+endif()

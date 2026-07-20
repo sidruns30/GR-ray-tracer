@@ -3,7 +3,6 @@
 */
 #pragma once
 #include "../utils.hpp"
-#include "../utils.cpp"
 #include "../output/display.hpp"
 
 
@@ -11,7 +10,7 @@
 
 // 1D array loader
 template<typename T>
-void load_1d_numpy_array(   const std::string& filename, 
+inline void load_1d_numpy_array(   const std::string& filename, 
                             Kokkos::View<T*>& kokkos_array
                             ) {
     // Load the npy file using cnpy
@@ -49,7 +48,7 @@ void load_1d_numpy_array(   const std::string& filename,
 
 //  2D array loader
 template<typename T>
-void load_2d_numpy_array(   const std::string& filename, 
+inline void load_2d_numpy_array(   const std::string& filename, 
                             Kokkos::View<T**>& kokkos_array
                             ) {
     // Load the npy file using cnpy
@@ -89,7 +88,7 @@ void load_2d_numpy_array(   const std::string& filename,
 
 // 3D array loader
 template<typename T>
-void load_3d_numpy_array(   const std::string& filename, 
+inline void load_3d_numpy_array(   const std::string& filename, 
                             Kokkos::View<T***>& kokkos_array
                             ) {
     // Load the npy file using cnpy
@@ -132,7 +131,7 @@ void load_3d_numpy_array(   const std::string& filename,
 
 // 4D array loader
 template<typename T>
-void load_4d_numpy_array(   const std::string& filename, 
+inline void load_4d_numpy_array(   const std::string& filename, 
                             Kokkos::View<T****>& kokkos_array
                             ) {
     // Load the npy file using cnpy
@@ -178,7 +177,7 @@ void load_4d_numpy_array(   const std::string& filename,
 }
 
 template<typename T>
-void load_coordinate_array(const std::string coord_type, 
+inline void load_coordinate_array(const std::string coord_type, 
                            const std::string& filename, 
                            Kokkos::View<T*>& kokkos_array) {
     
@@ -260,7 +259,7 @@ void load_coordinate_array(const std::string coord_type,
 
 // Load all the arrays needed for HAMR simulation
 // (This function can be expanded as needed to load specific arrays)
-void load_hamr_numpy_arrays(const std::string& base_path, 
+inline void load_hamr_numpy_arrays(const std::string& base_path, 
                             Kokkos::View<real*>& r,
                             Kokkos::View<real*>& theta,
                             Kokkos::View<real*>& phi, 
@@ -285,4 +284,36 @@ void load_hamr_numpy_arrays(const std::string& base_path,
         INFO("All HAMR numpy arrays loaded from base path: " + base_path);
     }
     return;
+}
+
+struct NumpyFieldPaths {
+    std::string r;
+    std::string theta;
+    std::string phi;
+    std::string density;
+    std::string temperature;
+    std::string velocity;
+    std::string magnetic;
+};
+
+struct NumpyFieldViews {
+    Kokkos::View<real*> r;
+    Kokkos::View<real*> theta;
+    Kokkos::View<real*> phi;
+    Kokkos::View<real***> density;
+    Kokkos::View<real***> temperature;
+    Kokkos::View<real****> velocity;
+    Kokkos::View<real****> magnetic;
+};
+
+inline NumpyFieldViews load_numpy_field_bundle(const NumpyFieldPaths& paths) {
+    NumpyFieldViews views;
+    load_coordinate_array<real>("r", paths.r, views.r);
+    load_coordinate_array<real>("theta", paths.theta, views.theta);
+    load_coordinate_array<real>("phi", paths.phi, views.phi);
+    load_3d_numpy_array<real>(paths.density, views.density);
+    load_3d_numpy_array<real>(paths.temperature, views.temperature);
+    load_4d_numpy_array<real>(paths.velocity, views.velocity);
+    load_4d_numpy_array<real>(paths.magnetic, views.magnetic);
+    return views;
 }

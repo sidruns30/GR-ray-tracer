@@ -6,15 +6,16 @@
     The campre
 */
 
-# pragma once
-#include "../utils.hpp"
-#include "../utils.cpp"
+#pragma once
+
 #include <Kokkos_Random.hpp>
+
+#include "../utils.hpp"
 #include "../metrics/cartesian_kerr_schild.hpp"
 
 
 
-void initialize_photons_pinhole(
+inline void initialize_photons_pinhole(
     const int photons_per_process,
     const real camera_distance,
     const real camera_theta,
@@ -23,6 +24,7 @@ void initialize_photons_pinhole(
     const int mpi_size,
     Photons &photons)
 {
+    (void)mpi_size;
     // camera location
     real cam_x = camera_distance * sin(camera_theta) * cos(camera_phi);
     real cam_y = camera_distance * sin(camera_theta) * sin(camera_phi);
@@ -49,6 +51,9 @@ void initialize_photons_pinhole(
             photons.k2(i)  = ky / k_norm;
             photons.k3(i)  = kz / k_norm;
             photons.I(i)  = 0.0;
+            photons.Q(i)  = 0.0;
+            photons.U(i)  = 0.0;
+            photons.V(i)  = 0.0;
             photons.dlambda(i) = dlambda * camera_distance;
             photons.terminate(i)  = false;
         }
@@ -56,13 +61,10 @@ void initialize_photons_pinhole(
     // Siddhant: Hopefully host views are not the memory bottleneck here
     photons.create_mirror_views();
     photons.copy_to_host();
-    compute_cartesian_kerr_schild_norms(photons.x0, photons.x1, photons.x2, photons.x3,
-                                    photons.k0, photons.k1, photons.k2, photons.k3,
-                                    photons.I);
     return;
 }
 
-void initialize_photons_image_camera(
+inline void initialize_photons_image_camera(
     const int photons_per_process,
     const real camera_distance,
     const real camera_theta,
@@ -71,6 +73,9 @@ void initialize_photons_image_camera(
     const int mpi_size,
     Photons &photons)
 {
+    (void)camera_theta;
+    (void)camera_phi;
+    (void)mpi_size;
     // Construct a plane perpendicular to the camera direction at distance camera_distance
     // Sample photons uniformly across the plane area
     real plane_x_center = camera_distance * sin(plane_theta) * cos(plane_phi);
@@ -117,20 +122,20 @@ void initialize_photons_image_camera(
             photons.k2(i)  = ky;
             photons.k3(i)  = kz;
             photons.I(i)  = 0.0;
+            photons.Q(i)  = 0.0;
+            photons.U(i)  = 0.0;
+            photons.V(i)  = 0.0;
             photons.dlambda(i) = dlambda * camera_distance;
             photons.terminate(i)  = false;
         }
     );
     photons.create_mirror_views();
     photons.copy_to_host();
-    compute_cartesian_kerr_schild_norms(photons.x0, photons.x1, photons.x2, photons.x3,
-                                    photons.k0, photons.k1, photons.k2, photons.k3,
-                                    photons.I);
     return;
 }
 
 // Custom photon initialization
-void initialize_photons_user(
+inline void initialize_photons_user(
     const int photons_per_process,
     Photons &photons)
 {
@@ -149,24 +154,19 @@ void initialize_photons_user(
             photons.x1(i)  = rand_gen.drand(1.0, 3.0);
             photons.x2(i)  = rand_gen.drand(1.0, 3.0);
             photons.x3(i)  = rand_gen.drand(1.0, 3.0);
-            auto x         = photons.x1(i);
-            auto y         = photons.x2(i);
-            auto z         = photons.x3(i);
-            auto RSQ       = SQR(x) + SQR(y) + SQR(z);
-            auto r         = sqrt(0.5 * (RSQ - SQR(a_BH) + sqrt(SQR(RSQ - SQR(a_BH)) + 4.0 * SQR(a_BH * z))));
             photons.k0(i)  = 0.0;
             photons.k1(i)  = 0.0;
             photons.k2(i)  = 0.0;
             photons.k3(i)  = 0.0;
             photons.I(i)  = 0.0;
+            photons.Q(i)  = 0.0;
+            photons.U(i)  = 0.0;
+            photons.V(i)  = 0.0;
             photons.dlambda(i) = 1e-2;
             photons.terminate(i)  = false;
         }
     );
     photons.create_mirror_views();
     photons.copy_to_host();
-    compute_cartesian_kerr_schild_norms(photons.x0, photons.x1, photons.x2, photons.x3,
-                                    photons.k0, photons.k1, photons.k2, photons.k3,
-                                    photons.I);
     return;
 }

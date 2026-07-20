@@ -21,6 +21,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BUILD_TESTING "Enable building tests" ON)
 option(ENABLE_WARNINGS "Enable extra compiler warnings" ON)
 
+include(CTest)
+
 if(ENABLE_WARNINGS)
     include(CheckCXXCompilerFlag)
     check_cxx_compiler_flag(-Wall HAS_WALL)
@@ -33,5 +35,4 @@ endif()
 add_subdirectory(src)
 
 # Testing and packaging helpers
-include(CTest)
 include(CPack)

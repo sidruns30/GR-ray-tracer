@@ -7,9 +7,10 @@
 
 #pragma once
 
-# include <chrono>
-# include <thread>
-# include "../utils.hpp"
+#include <chrono>
+#include <thread>
+
+#include "../utils.hpp"
 
 
 namespace Colors
@@ -26,9 +27,12 @@ namespace Colors
 }
 struct Timer
 {
-    Timer(const std::string& label) :   time_begin(std::chrono::high_resolution_clock::now()), 
-                                        label(label), total_time_elapsed(0.), 
-                                        time_since_checkpoint(0.) {}
+    Timer(const std::string& label)
+        : label(label),
+          time_begin(std::chrono::high_resolution_clock::now()),
+          time_end(time_begin),
+          total_time_elapsed(0.),
+          time_since_checkpoint(0.) {}
     std::string GetLabel() const
     {
         return label;
@@ -119,11 +123,9 @@ class Timers
             {   return false;}
 
             double total = 0.;
-            double total_checkpoint = 0.;
             for (auto& timer : timers)
             {
                 total += timer.total_time_elapsed;
-                total_checkpoint += timer.time_since_checkpoint;
             }
             std::cout << Colors::red << "Iteration: " << Colors::yellow << 
             "[" << current_iteration << "/" << n_iterations << 
@@ -157,24 +159,23 @@ class Timers
         std::size_t display_every;
 };
 
-void WARN(const std::string& message) {
+inline void WARN(const std::string& message) {
     std::cout << Colors::red << "WARNING: " << message << Colors::reset << std::endl;
     return;
 }
 
-void INFO(const std::string& message) {
+inline void INFO(const std::string& message) {
     std::cout << Colors::green << "INFO: " << message << Colors::reset << std::endl;
     return;
 }
 
 // Add color
-void INFO(const std::string& message, const std::string& color) {
+inline void INFO(const std::string& message, const std::string& color) {
     std::cout << color << "INFO: " << message << Colors::reset << std::endl;
     return;
 }
 
-void INIT(const std::string& message) {
+inline void INIT(const std::string& message) {
     std::cout << Colors::hotpink << "INIT: " << message << Colors::reset << std::endl;
     return;
 }
-
