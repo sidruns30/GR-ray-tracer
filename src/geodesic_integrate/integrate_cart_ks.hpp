@@ -37,6 +37,10 @@ struct Geodesic_cartesian_kerr_schild {
     Kokkos::View<real*> photon_V;
     Kokkos::View<real*> photon_dlambda;
     Kokkos::View<bool*> photon_terminate;
+    // Diagnostic: why a photon was terminated this step (0=not terminated this
+    // step, 1=horizon-absorbed, 2=left [r_term_min, r_term_max], 3=RK45 rejected
+    // every attempt) -- see the histogram printed in integrate_geodesics below.
+    Kokkos::View<int*> photon_termination_reason;
 
     Kokkos::View<real*> r, theta, phi;
     Kokkos::View<real***> rho, Tgas;
@@ -64,6 +68,7 @@ struct Geodesic_cartesian_kerr_schild {
 
     Geodesic_cartesian_kerr_schild(
       Photons &photon_,
+      const Kokkos::View<int*>& termination_reason_,
       const Kokkos::View<real*>& r_,
       const Kokkos::View<real*>& theta_,
       const Kokkos::View<real*>& phi_,
@@ -81,6 +86,7 @@ struct Geodesic_cartesian_kerr_schild {
        photon_k0(photon_.k0), photon_k1(photon_.k1), photon_k2(photon_.k2), photon_k3(photon_.k3),
        photon_I(photon_.I), photon_Q(photon_.Q), photon_U(photon_.U), photon_V(photon_.V),
        photon_dlambda(photon_.dlambda), photon_terminate(photon_.terminate),
+       photon_termination_reason(termination_reason_),
        r(r_), theta(theta_), phi(phi_), rho(rho_), Tgas(Tgas_),
        r_min(r_min_), r_max(r_max_), theta_min(theta_min_), theta_max(theta_max_),
        phi_min(phi_min_), phi_max(phi_max_), dlog_r(dlog_r_),
@@ -179,10 +185,12 @@ struct Geodesic_cartesian_kerr_schild {
             photon_U(idx) = 0.0;
             photon_V(idx) = 0.0;
             photon_terminate(idx) = true;
+            photon_termination_reason(idx) = 1;
             return;
         }
         if (photon_distance > r_term_max) {
             photon_terminate(idx) = true;
+            photon_termination_reason(idx) = 2;
             return;
         }
         
@@ -203,6 +211,7 @@ struct Geodesic_cartesian_kerr_schild {
             }
             if (!step_accepted) {
                 photon_terminate(idx) = true;
+                photon_termination_reason(idx) = 3;
                 return;
             }
         }
@@ -246,11 +255,14 @@ inline void integrate_geodesics(
 {
     float termination_fraction = 0.0f;
     const size_t num_photons = photons.x0.extent(0);
+    // Diagnostic accompanying the termination-fraction log line below -- see the
+    // photon_termination_reason comment in the functor above.
+    Kokkos::View<int*> termination_reason("termination_reason", num_photons);
     timers.AddTimer({"Geodesic Integration", "MPI Counts Send/Recv", "Active Photons Calc",  "Output"});
     for (auto current_step = 0; current_step < max_steps; current_step++)
     {
         timers.BeginTimer("Geodesic Integration");
-        Geodesic_cartesian_kerr_schild step_functor(photons, r, theta, phi, rho, Tgas,
+        Geodesic_cartesian_kerr_schild step_functor(photons, termination_reason, r, theta, phi, rho, Tgas,
             r_min, r_max, theta_min, theta_max, phi_min, phi_max, dlog_r, nr, ntheta, nphi,
             termination_r_min, termination_r_max, a_BH, M_BH,
             atol_default, rtol_default, min_scale, max_scale, safety,
@@ -280,9 +292,30 @@ inline void integrate_geodesics(
             int global_terminated = 0;
             MPI_Allreduce(&local_terminated, &global_terminated, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
             termination_fraction = static_cast<float>(global_terminated) / static_cast<float>(nphotons);
+            // Histogram of *why* terminated photons were terminated (see
+            // photon_termination_reason above) -- summed across MPI ranks like
+            // global_terminated, so this stays meaningful with rank>1.
+            int local_reason_counts[3] = {0, 0, 0};
+            for (int reason = 1; reason <= 3; ++reason) {
+                int count = 0;
+                Kokkos::parallel_reduce(
+                    "Count Termination Reasons",
+                    Kokkos::RangePolicy<>(0, num_photons),
+                    KOKKOS_LAMBDA(const int i, int& local_count) {
+                        if (termination_reason(i) == reason) local_count += 1;
+                    }, count
+                );
+                local_reason_counts[reason - 1] = count;
+            }
+            int global_reason_counts[3] = {0, 0, 0};
+            MPI_Allreduce(local_reason_counts, global_reason_counts, 3, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
             if (rank == 0) {
-                INFO("After step " + std::to_string(current_step) + ", termination fraction: " + std::to_string(termination_fraction), 
+                INFO("After step " + std::to_string(current_step) + ", termination fraction: " + std::to_string(termination_fraction),
             Colors::hotpink);
+                INFO("  Termination reasons -- horizon: " + std::to_string(global_reason_counts[0]) +
+                     ", escaped range: " + std::to_string(global_reason_counts[1]) +
+                     ", RK45 rejected all attempts: " + std::to_string(global_reason_counts[2]),
+                     Colors::hotpink);
                 timers.PrintTimers(current_step);
             }
             timers.EndTimer("MPI Counts Send/Recv");
