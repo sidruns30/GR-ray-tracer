@@ -132,13 +132,23 @@ struct Geodesic_cartesian_kerr_schild {
         return;
     }
 
+    // RHS callable passed to rk_detail::rk4_step/rk45_step below. Deliberately
+    // *this (an operator() overload) rather than a KOKKOS_LAMBDA capturing
+    // `this` -- the latter was observed to silently no-op on an H200/Hopper90
+    // build (rk4_step/rk45_step's by-reference/pointer outputs were left
+    // completely untouched, sentinel values and all, while a *direct*
+    // compute_rhs(...) call from operator() worked correctly on the same
+    // hardware). A nested extended-__device__-lambda capturing `this`, forwarded
+    // as a generic template parameter into another function, is a known rough
+    // edge for some CUDA toolchains -- passing the functor itself sidesteps it.
+    KOKKOS_FUNCTION
+    void operator()(const real in[8], real out[8]) const {
+        compute_rhs(in, out);
+    }
+
     KOKKOS_FUNCTION
     void rk4_step(real (&state)[8], real dt_local) const {
-        const auto* self = this;
-        auto rhs = KOKKOS_LAMBDA(const real in[8], real out[8]) {
-            self->compute_rhs(in, out);
-        };
-        rk_detail::rk4_step<8>(state, dt_local, rhs);
+        rk_detail::rk4_step<8>(state, dt_local, *this);
     }
 
     // step_accepted drives the retry loop in operator() below.
@@ -152,11 +162,7 @@ struct Geodesic_cartesian_kerr_schild {
         bool* debug_finite_out = nullptr
     ) const
     {
-        const auto* self = this;
-        auto rhs = KOKKOS_LAMBDA(const real in[8], real out[8]) {
-            self->compute_rhs(in, out);
-        };
-        rk_detail::rk45_step<8>(state, dlambda, step_accepted, rhs, k1,
+        rk_detail::rk45_step<8>(state, dlambda, step_accepted, *this, k1,
                                  atol, rtol, min_step_scale, max_step_scale, safety_factor,
                                  debug_err_out, debug_finite_out);
     }
