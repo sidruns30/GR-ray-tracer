@@ -12,10 +12,6 @@
 
 */
 #pragma once
-#include <cstdio>
-#ifdef KOKKOS_ENABLE_CUDA
-#include <cuda_runtime.h>
-#endif
 #include "../utils.hpp"
 #include "../input/load_python_arrays.hpp"
 #include "../output/write_output.hpp"
@@ -137,16 +133,9 @@ struct Geodesic_cartesian_kerr_schild {
 
     // rk4_step/rk45_step below duplicate rk_detail::rk4_step/rk45_step's
     // Butcher-tableau logic inline (calling compute_rhs directly) rather than
-    // delegating to that generic template. On an H200/Hopper90 build, calling
-    // rk_detail::rk4_step<8>/rk45_step<8> -- with a self-capturing KOKKOS_LAMBDA
-    // as the RHS, and separately after replacing that with passing the functor
-    // itself, and separately again after converting its reference output
-    // params to pointers -- was a complete no-op every time: state/dt/accepted
-    // and even freshly-added debug output pointers came back at their
-    // untouched initial values, as if the template function's body never ran.
-    // A *direct*, non-template compute_rhs(...) call from operator() worked
-    // correctly and matched CPU throughout. rk_detail:: itself is left as-is
-    // for its host-only unit test (test_rk_integrators.cpp).
+    // delegating to that generic template, mainly so both share this functor's
+    // members directly. rk_detail:: is kept in sync and still used by its
+    // host-only unit test (test_rk_integrators.cpp).
     KOKKOS_FUNCTION
     void rk4_step(real* state, real dt_local) const {
         real k1[8], k2[8], k3[8], k4[8], tmp[8];
@@ -162,11 +151,10 @@ struct Geodesic_cartesian_kerr_schild {
         }
     }
 
-    // Returns whether the step was accepted (drives the retry loop in
-    // operator() below) rather than writing it through a bool* -- every other
-    // proven-working function in this file returns real by value or writes
-    // only real* outputs; this is the first (and, until isolated, suspect)
-    // case of a bool output mixed with real* outputs in the same call.
+    // Returns 1/0 (accepted/rejected) rather than a bool; error_out/finite_out
+    // are optional (pass nullptr to skip). dlambda/state are pointers into
+    // operator()'s own thread-local locals -- see the caller below for why
+    // this must never be a pointer to a live Kokkos::View element instead.
     KOKKOS_FUNCTION
     int rk45_step(
         real* state,
@@ -245,12 +233,6 @@ struct Geodesic_cartesian_kerr_schild {
 
     KOKKOS_FUNCTION
     void operator()(const int idx) const {
-        // TEMPORARY: tracing why idx==0's state was observed bit-identical
-        // across many steps on an H200 run -- remove once root-caused.
-        if (idx == 0) {
-            printf("[GPUDBG] step=%llu enter idx=0 terminate=%d\n",
-                   static_cast<unsigned long long>(step_index), static_cast<int>(photon_terminate(idx)));
-        }
         if (photon_terminate(idx)) {
             return;
         }
@@ -265,22 +247,6 @@ struct Geodesic_cartesian_kerr_schild {
             photon_k2(idx),
             photon_k3(idx)
         };
-        if (idx == 0) {
-            printf("[GPUDBG] step=%llu idx=0 pre-state t=%.9f x=%.9f y=%.9f z=%.9f kt=%.9f kx=%.9f ky=%.9f kz=%.9f dlambda=%.9e integrator=%d\n",
-                   static_cast<unsigned long long>(step_index), state[0], state[1], state[2], state[3],
-                   state[4], state[5], state[6], state[7],
-                   photon_dlambda(idx), static_cast<int>(integrator));
-            real dbg_rhs[8];
-            compute_rhs(state, dbg_rhs);
-            real dbg_ginv[4][4];
-            const real dbg_X[4] = {state[IT], state[IX], state[IY], state[IZ]};
-            kerr_schild::compute_inverse_metric(dbg_X, a_BH, M_BH, dbg_ginv);
-            printf("[GPUDBG] step=%llu idx=0 a_BH=%.9f M_BH=%.9f rhs=(%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e) ginv00=%.9e ginv11=%.9e\n",
-                   static_cast<unsigned long long>(step_index), a_BH, M_BH,
-                   dbg_rhs[0], dbg_rhs[1], dbg_rhs[2], dbg_rhs[3],
-                   dbg_rhs[4], dbg_rhs[5], dbg_rhs[6], dbg_rhs[7],
-                   dbg_ginv[0][0], dbg_ginv[1][1]);
-        }
         // Compute distance traveled for adaptive step sizing if needed
         real photon_distance = kerr_schild::compute_r(state[IX], state[IY], state[IZ], a_BH);
         if (photon_distance <= r_term_min) {
@@ -301,18 +267,6 @@ struct Geodesic_cartesian_kerr_schild {
             return;
         }
         
-        // Print the enum constants as well as the captured value.  The original
-        // trace printed integrator=1 but did not print anything from inside the
-        // RK45 branch, which means either a stale binary was running or 1 was not
-        // actually the underlying value of IntegratorType::RK45.
-        if (idx == 0) {
-            printf("[GPUDBG] step=%llu dispatch integrator=%d RK4=%d RK45=%d\n",
-                   static_cast<unsigned long long>(step_index),
-                   static_cast<int>(integrator),
-                   static_cast<int>(IntegratorType::RK4),
-                   static_cast<int>(IntegratorType::RK45));
-        }
-
         if (integrator == IntegratorType::RK4) {
             rk4_step(state, photon_dlambda(idx));
         }
@@ -329,16 +283,7 @@ struct Geodesic_cartesian_kerr_schild {
             constexpr int max_rk45_attempts = 12;
 
             for (int attempt = 0; attempt < max_rk45_attempts; ++attempt) {
-                real attempt_error = real(0.0);
-                int attempt_finite = 0;
-                step_accepted = rk45_step(
-                    state, &dlambda_local, k1, &attempt_error, &attempt_finite);
-                if (idx == 0) {
-                    printf("[GPUDBG] step=%llu idx=0 rk45 attempt=%d accepted=%d finite=%d err=%.9e dlambda=%.9e state0=%.9e state1=%.9e\n",
-                           static_cast<unsigned long long>(step_index), attempt,
-                           step_accepted, attempt_finite, attempt_error,
-                           dlambda_local, state[0], state[1]);
-                }
+                step_accepted = rk45_step(state, &dlambda_local, k1, nullptr, nullptr);
                 if (step_accepted) break;
             }
 
@@ -351,20 +296,11 @@ struct Geodesic_cartesian_kerr_schild {
         }
         else {
             // Do not silently write an unchanged state when an invalid or stale
-            // enum value reaches the device.
-            if (idx == 0) {
-                printf("[GPUDBG] ERROR: unknown integrator value %d; no step executed\n",
-                       static_cast<int>(integrator));
-            }
+            // enum value reaches the device -- should never happen, but fail
+            // loudly rather than quietly leaving the photon frozen.
             photon_terminate(idx) = true;
             photon_termination_reason(idx) = 3;
             return;
-        }
-
-        if (idx == 0) {
-            printf("[GPUDBG] step=%llu idx=0 post-integrate state t=%.9f x=%.9f y=%.9f z=%.9f kt=%.9f kx=%.9f ky=%.9f kz=%.9f dlambda=%.9e\n",
-                   static_cast<unsigned long long>(step_index), state[0], state[1], state[2], state[3],
-                   state[4], state[5], state[6], state[7], photon_dlambda(idx));
         }
 
         real stokes[4] = {
@@ -423,22 +359,6 @@ inline void integrate_geodesics(
         Kokkos::RangePolicy<>(0, num_photons),
         step_functor
         );
-        // TEMPORARY: unconditional fence + explicit CUDA error check every step,
-        // to catch a silent CUDA runtime error (e.g. stack overflow / illegal
-        // access) that Release-mode Kokkos::fence() alone won't surface -- see
-        // the idx=0 trace in operator() vanishing mid-kernel with no output on
-        // an H200/Hopper90 run. Remove once root-caused (this defeats the
-        // batched fencing below and will be slow).
-#ifdef KOKKOS_ENABLE_CUDA
-        {
-            Kokkos::fence();
-            cudaError_t cuda_err = cudaGetLastError();
-            if (cuda_err != cudaSuccess) {
-                printf("[GPUDBG] CUDA ERROR after step %d parallel_for: %s (%s)\n",
-                       current_step, cudaGetErrorName(cuda_err), cudaGetErrorString(cuda_err));
-            }
-        }
-#endif
         timers.EndTimer("Geodesic Integration");
         // Siddhant: Can be converted to a pretty print function later
         if (current_step % output_interval == 0 || current_step == max_steps - 1) {
