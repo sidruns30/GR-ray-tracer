@@ -68,4 +68,8 @@ if(BUILD_TESTING)
     add_executable(test_output_stride tests/test_output_stride.cpp)
     target_link_libraries(test_output_stride PRIVATE grraytracer_core)
     add_test(NAME output_stride COMMAND test_output_stride)
+
+    add_executable(test_simulation_options tests/test_simulation_options.cpp)
+    target_link_libraries(test_simulation_options PRIVATE grraytracer_core)
+    add_test(NAME simulation_options COMMAND test_simulation_options)
 endif()

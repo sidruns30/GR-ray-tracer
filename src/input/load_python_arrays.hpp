@@ -4,8 +4,10 @@
 #include <array>
 #include <cmath>
 #include <fstream>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../utils.hpp"
@@ -20,6 +22,43 @@ struct NumpyFieldPaths {
     std::string velocity;
     std::string magnetic;
 };
+
+inline NumpyFieldPaths discover_numpy_field_paths(const std::string& directory) {
+    namespace fs = std::filesystem;
+    const fs::path root(directory);
+    if (!fs::exists(root)) {
+        throw std::runtime_error("NumPy directory does not exist: " + root.string());
+    }
+    if (!fs::is_directory(root)) {
+        throw std::runtime_error("NumPy input path is not a directory: " + root.string());
+    }
+
+    NumpyFieldPaths paths{
+        (root / "r.npy").string(),
+        (root / "theta.npy").string(),
+        (root / "phi.npy").string(),
+        (root / "rho.npy").string(),
+        (root / "Tgas.npy").string(),
+        (root / "vel.npy").string(),
+        (root / "mag.npy").string()};
+    const std::array<std::pair<const char*, const std::string*>, 7> required{{
+        {"r.npy", &paths.r}, {"theta.npy", &paths.theta}, {"phi.npy", &paths.phi},
+        {"rho.npy", &paths.density}, {"Tgas.npy", &paths.temperature},
+        {"vel.npy", &paths.velocity}, {"mag.npy", &paths.magnetic}}};
+
+    std::string missing;
+    for (const auto& [name, path] : required) {
+        if (!fs::is_regular_file(*path)) {
+            if (!missing.empty()) missing += ", ";
+            missing += name;
+        }
+    }
+    if (!missing.empty()) {
+        throw std::runtime_error(
+            "NumPy directory '" + root.string() + "' is missing required file(s): " + missing);
+    }
+    return paths;
+}
 
 struct NumpyFieldViews {
     Kokkos::View<real*> r;

@@ -81,6 +81,21 @@ int main(int argc, char* argv[]) {
         options.enable_scattering = false;
     }
 
+    NumpyFieldPaths numpy_paths;
+    if (!options.vacuum) {
+        try {
+            numpy_paths = discover_numpy_field_paths(options.numpy_dir);
+        } catch (const std::exception& e) {
+            if (mpi_rank == 0) {
+                ERROR(std::string("Invalid NumPy input: ") + e.what());
+                ERROR("Generate example data with: python3 src/create_example_data.py --output-dir <dir>, "
+                      "then select it with --numpy-dir <dir>.");
+            }
+            MPI_Finalize();
+            return 1;
+        }
+    }
+
     // Initialize Kokkos
     Kokkos::initialize(argc, argv);
     {
@@ -90,25 +105,12 @@ int main(int argc, char* argv[]) {
         if (!options.vacuum) {
             timers.AddTimer("Load HAMR Data");
             timers.BeginTimer("Load HAMR Data");
-            NumpyFieldPaths paths = options.fields;
-            if (paths.r.empty()) paths.r = "./r.npy";
-            if (paths.theta.empty()) paths.theta = "./theta.npy";
-            if (paths.phi.empty()) paths.phi = "./phi.npy";
-            if (paths.density.empty()) paths.density = "./rho.npy";
-            if (paths.temperature.empty()) paths.temperature = "./Tgas.npy";
-            if (paths.velocity.empty()) paths.velocity = "./vel.npy";
-            if (paths.magnetic.empty()) paths.magnetic = "./mag.npy";
-
             try {
-                fields = load_numpy_field_bundle(paths, decomposition_spec, mpi_rank, mpi_size);
+                fields = load_numpy_field_bundle(
+                    numpy_paths, decomposition_spec, mpi_rank, mpi_size);
             } catch (const std::exception& e) {
                 if (mpi_rank == 0) {
                     ERROR(std::string("Failed to load input grid data: ") + e.what());
-                    ERROR("Expected grid files: " + paths.r + ", " + paths.theta + ", " + paths.phi + ", " +
-                          paths.density + ", " + paths.temperature + ", " + paths.velocity + ", " + paths.magnetic);
-                    ERROR("Generate example grid data with: python3 src/create_example_data.py --output-dir <dir>, "
-                          "or point at real data with --grid-r/--grid-theta/--grid-phi/--density/--temperature/"
-                          "--velocity/--magnetic, or pass --vacuum to skip grid data and run pure vacuum geodesics.");
                 }
                 Kokkos::finalize();
                 MPI_Finalize();

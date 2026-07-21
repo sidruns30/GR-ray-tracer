@@ -8,7 +8,7 @@
 #include "radiative_transfer/scattering.hpp"
 
 struct SimulationOptions {
-    NumpyFieldPaths fields;
+    std::string numpy_dir = ".";
     std::string output_dir = output_directory;
     std::string config_path;
     std::optional<std::string> output_variables;
@@ -43,13 +43,7 @@ inline SimulationOptions parse_simulation_options(int argc, char* argv[]) {
             return argv[++i];
         };
 
-        if (flag == "--grid-r") options.fields.r = next_value("--grid-r");
-        else if (flag == "--grid-theta") options.fields.theta = next_value("--grid-theta");
-        else if (flag == "--grid-phi") options.fields.phi = next_value("--grid-phi");
-        else if (flag == "--density") options.fields.density = next_value("--density");
-        else if (flag == "--temperature") options.fields.temperature = next_value("--temperature");
-        else if (flag == "--velocity") options.fields.velocity = next_value("--velocity");
-        else if (flag == "--magnetic") options.fields.magnetic = next_value("--magnetic");
+        if (flag == "--numpy-dir") options.numpy_dir = next_value("--numpy-dir");
         else if (flag == "--output-dir") options.output_dir = next_value("--output-dir");
         else if (flag == "--output-variables") options.output_variables = next_value("--output-variables");
         else if (flag == "--config") options.config_path = next_value("--config");
