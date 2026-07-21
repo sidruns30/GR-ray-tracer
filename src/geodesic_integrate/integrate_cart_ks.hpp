@@ -300,21 +300,20 @@ struct Geodesic_cartesian_kerr_schild {
             rk4_step(state, photon_dlambda(idx));
         }
         else if (integrator == IntegratorType::RK45) {
-            bool step_accepted = false;
-            int max_attempts = 20;
-            int attempts = 0;
-            // state (hence k1 = compute_rhs(state)) is unchanged across rejected
-            // retries -- only dlambda shrinks -- so k1 is computed once and reused.
+            // TEMPORARY: retry loop replaced with a single unconditional call
+            // (no adaptive retry) to isolate whether the *loop* is the trigger
+            // for RK45's state never updating on an H200/Hopper90 build, versus
+            // something in rk45_step's own body (it's the only function here
+            // using std::pow/std::clamp/std::isfinite, unlike rk4_step/
+            // compute_rhs which are both proven to work). Restore the loop
+            // once root-caused.
             real k1[8];
             compute_rhs(state, k1);
-            while (!step_accepted && attempts < max_attempts) {
-                step_accepted = rk45_step(state, &photon_dlambda(idx), k1);
-                if (idx == 0) {
-                    printf("[GPUDBG] step=%llu idx=0 rk45 attempt=%d accepted=%d dlambda=%.9e\n",
-                           static_cast<unsigned long long>(step_index), attempts,
-                           static_cast<int>(step_accepted), photon_dlambda(idx));
-                }
-                attempts++;
+            bool step_accepted = rk45_step(state, &photon_dlambda(idx), k1);
+            if (idx == 0) {
+                printf("[GPUDBG] step=%llu idx=0 rk45 single-call accepted=%d dlambda=%.9e\n",
+                       static_cast<unsigned long long>(step_index),
+                       static_cast<int>(step_accepted), photon_dlambda(idx));
             }
             if (!step_accepted) {
                 photon_terminate(idx) = true;
