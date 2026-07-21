@@ -162,80 +162,9 @@ struct Geodesic_cartesian_kerr_schild {
         }
     }
 
-    // Returns whether the step was accepted (drives the retry loop in
-    // operator() below) rather than writing it through a bool* -- every other
-    // proven-working function in this file returns real by value or writes
-    // only real* outputs; this is the first (and, until isolated, suspect)
-    // case of a bool output mixed with real* outputs in the same call.
-    KOKKOS_FUNCTION
-    bool rk45_step(
-        real* state,
-        real* dlambda,
-        const real* k1
-    ) const
-    {
-        const real a21 = 1.0 / 4.0;
-        const real a31 = 3.0 / 32.0, a32 = 9.0 / 32.0;
-        const real a41 = 1932.0 / 2197.0, a42 = -7200.0 / 2197.0, a43 = 7296.0 / 2197.0;
-        const real a51 = 439.0 / 216.0, a52 = -8.0, a53 = 3680.0 / 513.0, a54 = -845.0 / 4104.0;
-        const real a61 = -8.0 / 27.0, a62 = 2.0, a63 = -3544.0 / 2565.0, a64 = 1859.0 / 4104.0, a65 = -11.0 / 40.0;
-
-        const real b4_1 = 25.0 / 216.0;
-        const real b4_3 = 1408.0 / 2565.0;
-        const real b4_4 = 2197.0 / 4104.0;
-        const real b4_5 = -1.0 / 5.0;
-        const real b5_1 = 16.0 / 135.0;
-        const real b5_3 = 6656.0 / 12825.0;
-        const real b5_4 = 28561.0 / 56430.0;
-        const real b5_5 = -9.0 / 50.0;
-        const real b5_6 = 2.0 / 55.0;
-
-        const real dt_val = *dlambda;
-        real k2[8], k3[8], k4[8], k5[8], k6[8], tmp[8];
-        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * a21 * k1[i];
-        compute_rhs(tmp, k2);
-        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a31 * k1[i] + a32 * k2[i]);
-        compute_rhs(tmp, k3);
-        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a41 * k1[i] + a42 * k2[i] + a43 * k3[i]);
-        compute_rhs(tmp, k4);
-        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a51 * k1[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
-        compute_rhs(tmp, k5);
-        for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a61 * k1[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
-        compute_rhs(tmp, k6);
-
-        real x4[8], x5[8], err = 0.0;
-        bool finite = true;
-        for (int i = 0; i < 8; ++i) {
-            x4[i] = state[i] + dt_val * (b4_1 * k1[i] + b4_3 * k3[i] + b4_4 * k4[i] + b4_5 * k5[i]);
-            x5[i] = state[i] + dt_val * (b5_1 * k1[i] + b5_3 * k3[i] + b5_4 * k4[i] + b5_5 * k5[i] + b5_6 * k6[i]);
-            const real scale_i = atol + rtol * std::max(std::abs(x5[i]), std::abs(x4[i]));
-            const real ratio = std::abs(x5[i] - x4[i]) / scale_i;
-            if (!std::isfinite(x5[i]) || !std::isfinite(ratio)) finite = false;
-            err = std::max(err, ratio);
-        }
-
-        if (!finite) {
-            *dlambda = dt_val * min_step_scale;
-            return false;
-        }
-
-        if (err == 0.0) {
-            *dlambda = dt_val * max_step_scale;
-            for (int i = 0; i < 8; ++i) state[i] = x5[i];
-            return true;
-        }
-
-        real scale = safety_factor * std::pow(1.0 / err, 0.25);
-        scale = std::clamp(scale, min_step_scale, max_step_scale);
-        if (err < 1.0) {
-            *dlambda = dt_val * scale;
-            for (int i = 0; i < 8; ++i) state[i] = x5[i];
-            return true;
-        } else {
-            *dlambda = dt_val * scale;
-            return false;
-        }
-    }
+    // rk45_step as a separate member function is gone -- see the RK45 branch
+    // in operator() below, which now inlines this same logic directly with no
+    // function-call boundary at all for the commit (state[i]=x5[i]) step.
 
 
     KOKKOS_FUNCTION
@@ -300,20 +229,83 @@ struct Geodesic_cartesian_kerr_schild {
             rk4_step(state, photon_dlambda(idx));
         }
         else if (integrator == IntegratorType::RK45) {
-            // TEMPORARY: retry loop replaced with a single unconditional call
-            // (no adaptive retry) to isolate whether the *loop* is the trigger
-            // for RK45's state never updating on an H200/Hopper90 build, versus
-            // something in rk45_step's own body (it's the only function here
-            // using std::pow/std::clamp/std::isfinite, unlike rk4_step/
-            // compute_rhs which are both proven to work). Restore the loop
-            // once root-caused.
+            // TEMPORARY: RK45's entire Butcher-tableau + accept/commit logic
+            // inlined directly here, with NO separate function call boundary
+            // at all (previously a separate rk45_step member function) -- to
+            // test whether crossing a function boundary for this specific
+            // combination of outputs (state[], dlambda, accepted) is itself
+            // the issue on an H200/Hopper90 build, given rk4_step (writes
+            // state[] through a pointer too, but simpler, no other outputs)
+            // works fine while every rk45_step variant tried so far hasn't.
+            // No adaptive retry loop for now either. Restore both once
+            // root-caused.
+            const real a21 = 1.0 / 4.0;
+            const real a31 = 3.0 / 32.0, a32 = 9.0 / 32.0;
+            const real a41 = 1932.0 / 2197.0, a42 = -7200.0 / 2197.0, a43 = 7296.0 / 2197.0;
+            const real a51 = 439.0 / 216.0, a52 = -8.0, a53 = 3680.0 / 513.0, a54 = -845.0 / 4104.0;
+            const real a61 = -8.0 / 27.0, a62 = 2.0, a63 = -3544.0 / 2565.0, a64 = 1859.0 / 4104.0, a65 = -11.0 / 40.0;
+
+            const real b4_1 = 25.0 / 216.0;
+            const real b4_3 = 1408.0 / 2565.0;
+            const real b4_4 = 2197.0 / 4104.0;
+            const real b4_5 = -1.0 / 5.0;
+            const real b5_1 = 16.0 / 135.0;
+            const real b5_3 = 6656.0 / 12825.0;
+            const real b5_4 = 28561.0 / 56430.0;
+            const real b5_5 = -9.0 / 50.0;
+            const real b5_6 = 2.0 / 55.0;
+
             real k1[8];
             compute_rhs(state, k1);
-            bool step_accepted = rk45_step(state, &photon_dlambda(idx), k1);
+            const real dt_val = photon_dlambda(idx);
+            real k2[8], k3[8], k4[8], k5[8], k6[8], tmp[8];
+            for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * a21 * k1[i];
+            compute_rhs(tmp, k2);
+            for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a31 * k1[i] + a32 * k2[i]);
+            compute_rhs(tmp, k3);
+            for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a41 * k1[i] + a42 * k2[i] + a43 * k3[i]);
+            compute_rhs(tmp, k4);
+            for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a51 * k1[i] + a52 * k2[i] + a53 * k3[i] + a54 * k4[i]);
+            compute_rhs(tmp, k5);
+            for (int i = 0; i < 8; ++i) tmp[i] = state[i] + dt_val * (a61 * k1[i] + a62 * k2[i] + a63 * k3[i] + a64 * k4[i] + a65 * k5[i]);
+            compute_rhs(tmp, k6);
+
+            real x4[8], x5[8], err = 0.0;
+            bool finite = true;
+            for (int i = 0; i < 8; ++i) {
+                x4[i] = state[i] + dt_val * (b4_1 * k1[i] + b4_3 * k3[i] + b4_4 * k4[i] + b4_5 * k5[i]);
+                x5[i] = state[i] + dt_val * (b5_1 * k1[i] + b5_3 * k3[i] + b5_4 * k4[i] + b5_5 * k5[i] + b5_6 * k6[i]);
+                const real scale_i = atol + rtol * std::max(std::abs(x5[i]), std::abs(x4[i]));
+                const real ratio = std::abs(x5[i] - x4[i]) / scale_i;
+                if (!std::isfinite(x5[i]) || !std::isfinite(ratio)) finite = false;
+                err = std::max(err, ratio);
+            }
+
+            bool step_accepted;
+            if (!finite) {
+                photon_dlambda(idx) = dt_val * min_step_scale;
+                step_accepted = false;
+            } else if (err == 0.0) {
+                photon_dlambda(idx) = dt_val * max_step_scale;
+                for (int i = 0; i < 8; ++i) state[i] = x5[i];
+                step_accepted = true;
+            } else {
+                real scale = safety_factor * std::pow(1.0 / err, 0.25);
+                scale = std::clamp(scale, min_step_scale, max_step_scale);
+                photon_dlambda(idx) = dt_val * scale;
+                if (err < 1.0) {
+                    for (int i = 0; i < 8; ++i) state[i] = x5[i];
+                    step_accepted = true;
+                } else {
+                    step_accepted = false;
+                }
+            }
+
             if (idx == 0) {
-                printf("[GPUDBG] step=%llu idx=0 rk45 single-call accepted=%d dlambda=%.9e\n",
+                printf("[GPUDBG] step=%llu idx=0 rk45 inline accepted=%d dlambda=%.9e err=%.9e finite=%d state=(%.9f,%.9f,%.9f,%.9f)\n",
                        static_cast<unsigned long long>(step_index),
-                       static_cast<int>(step_accepted), photon_dlambda(idx));
+                       static_cast<int>(step_accepted), photon_dlambda(idx), err, static_cast<int>(finite),
+                       state[0], state[1], state[2], state[3]);
             }
             if (!step_accepted) {
                 photon_terminate(idx) = true;
