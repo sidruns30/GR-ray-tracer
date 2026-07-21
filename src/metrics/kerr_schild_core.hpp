@@ -154,6 +154,43 @@ void compute_inverse_metric_deriv(const real X[4], real a_BH, real M_BH, real dg
     }
 }
 
+// Hamilton's equations for H = 1/2 g^{mu nu} p_mu p_nu. Contracting the
+// Kerr-Schild form analytically avoids materializing a 4x4x4 derivative tensor
+// at every Runge-Kutta stage, which reduces both arithmetic and GPU stack use.
+KOKKOS_INLINE_FUNCTION
+void compute_hamiltonian_rhs(const real X[4], const real p_cov[4],
+                             real a_BH, real M_BH, real rhs[8]) {
+    real r, dr[3];
+    compute_r_and_deriv(X[1], X[2], X[3], a_BH, r, dr);
+
+    real ldown[4], dldown[3][4];
+    compute_l_and_deriv(X[1], X[2], X[3], r, dr, a_BH, ldown, dldown);
+
+    real dH[3];
+    const real H = compute_H_and_deriv(r, X[3], dr, a_BH, M_BH, dH);
+    const real lup[4] = {-ldown[0], ldown[1], ldown[2], ldown[3]};
+
+    real l_dot_p = 0.0;
+    for (int mu = 0; mu < 4; ++mu) {
+        l_dot_p += lup[mu] * p_cov[mu];
+    }
+
+    rhs[0] = -p_cov[0] - 2.0 * H * lup[0] * l_dot_p;
+    for (int mu = 1; mu < 4; ++mu) {
+        rhs[mu] = p_cov[mu] - 2.0 * H * lup[mu] * l_dot_p;
+    }
+
+    rhs[IKT] = 0.0; // The stationary metric conserves p_t exactly.
+    for (int k = 0; k < 3; ++k) {
+        const real dlup[4] = {-dldown[k][0], dldown[k][1], dldown[k][2], dldown[k][3]};
+        real dl_dot_p = 0.0;
+        for (int mu = 0; mu < 4; ++mu) {
+            dl_dot_p += dlup[mu] * p_cov[mu];
+        }
+        rhs[IKX + k] = dH[k] * SQR(l_dot_p) + 2.0 * H * l_dot_p * dl_dot_p;
+    }
+}
+
 // Given a spatial contravariant direction K^i at position X, solves for K^0 such
 // that K^mu = (K^0, K^i) is null (g_{mu nu} K^mu K^nu = 0) -- picking the
 // future-directed (K^0 > 0) root -- then lowers the index to return the

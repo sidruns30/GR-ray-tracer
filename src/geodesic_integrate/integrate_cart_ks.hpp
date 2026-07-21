@@ -1,26 +1,10 @@
-/*
-    Integrate the geodesic equations in Cartesian Kerr-Schild coordinates
-
-    Inputs: Kokkos::View<real**> photons("camera_pixels", photons_per_process, 9);
-            Each row corresponds to a photon with:
-            (t, x, y, z, k_t, k_x, k_y, k_z, intensity)
-
-            Kokkos::View<real***> r, theta, phi, rho, bsqr, pgas, Tgas, ug;
-            Kokkos::View<real****> bu, uu;
-            Compute emmisivity to the intensity and forward integrate
-            Use RK4 step for integration
-
-*/
+// Geodesic integration in Cartesian Kerr-Schild coordinates.
 #pragma once
 #include "../utils.hpp"
-#include "../input/load_python_arrays.hpp"
 #include "../output/write_output.hpp"
 #include "../output/display.hpp"
-#include "../metrics/cartesian_kerr_schild.hpp"
 #include "../metrics/kerr_schild_core.hpp"
-#include "../radiative_transfer/observation.hpp"
 #include "../radiative_transfer/scattering.hpp"
-#include "rk_integrators.hpp"
 
 struct Geodesic_cartesian_kerr_schild {
     Kokkos::View<real*> photon_x0;
@@ -37,16 +21,7 @@ struct Geodesic_cartesian_kerr_schild {
     Kokkos::View<real*> photon_V;
     Kokkos::View<real*> photon_dlambda;
     Kokkos::View<bool*> photon_terminate;
-    // Diagnostic: why a photon was terminated this step (0=not terminated this
-    // step, 1=horizon-absorbed, 2=left [r_term_min, r_term_max], 3=RK45 rejected
-    // every attempt) -- see the histogram printed in integrate_geodesics below.
-    Kokkos::View<int*> photon_termination_reason;
 
-    Kokkos::View<real*> r, theta, phi;
-    Kokkos::View<real***> rho, Tgas;
-    real r_min, r_max, theta_min, theta_max, phi_min, phi_max, dlog_r;
-    
-    size_t nr, ntheta, nphi;
     const real r_term_min;
     const real r_term_max;
     // Captured by value from the (runtime-configurable) globals at functor
@@ -68,15 +43,7 @@ struct Geodesic_cartesian_kerr_schild {
 
     Geodesic_cartesian_kerr_schild(
       Photons &photon_,
-      const Kokkos::View<int*>& termination_reason_,
-      const Kokkos::View<real*>& r_,
-      const Kokkos::View<real*>& theta_,
-      const Kokkos::View<real*>& phi_,
-      const Kokkos::View<real***>& rho_,
-      const Kokkos::View<real***>& Tgas_,
-      real r_min_, real r_max_, real theta_min_, real theta_max_,
-      real phi_min_, real phi_max_, real dlog_r_,
-      size_t nr_, size_t ntheta_, size_t nphi_, const real r_term_min_, const real r_term_max_,
+      const real r_term_min_, const real r_term_max_,
       real a_BH_, real M_BH_,
       real atol_, real rtol_, real min_step_scale_, real max_step_scale_, real safety_factor_,
       const ScatteringModel& scattering_model_ = ScatteringModel{},
@@ -86,11 +53,7 @@ struct Geodesic_cartesian_kerr_schild {
        photon_k0(photon_.k0), photon_k1(photon_.k1), photon_k2(photon_.k2), photon_k3(photon_.k3),
        photon_I(photon_.I), photon_Q(photon_.Q), photon_U(photon_.U), photon_V(photon_.V),
        photon_dlambda(photon_.dlambda), photon_terminate(photon_.terminate),
-       photon_termination_reason(termination_reason_),
-       r(r_), theta(theta_), phi(phi_), rho(rho_), Tgas(Tgas_),
-       r_min(r_min_), r_max(r_max_), theta_min(theta_min_), theta_max(theta_max_),
-       phi_min(phi_min_), phi_max(phi_max_), dlog_r(dlog_r_),
-       nr(nr_), ntheta(ntheta_), nphi(nphi_), r_term_min(r_term_min_), r_term_max(r_term_max_),
+       r_term_min(r_term_min_), r_term_max(r_term_max_),
        a_BH(a_BH_), M_BH(M_BH_),
        atol(atol_), rtol(rtol_), min_step_scale(min_step_scale_), max_step_scale(max_step_scale_),
        safety_factor(safety_factor_),
@@ -98,37 +61,7 @@ struct Geodesic_cartesian_kerr_schild {
 
     KOKKOS_FUNCTION
     void compute_rhs(const real state[8], real dstates[8]) const {
-        real x[4];
-        x[0] = state[IT];
-        x[1] = state[IX];
-        x[2] = state[IY];
-        x[3] = state[IZ];
-        real p_cov[4];
-        p_cov[0] = state[IKT];
-        p_cov[1] = state[IKX];
-        p_cov[2] = state[IKY];
-        p_cov[3] = state[IKZ];
-        real ginv[4][4];
-        real dginv[4][4][4];
-        kerr_schild::compute_inverse_metric(x, a_BH, M_BH, ginv);
-        kerr_schild::compute_inverse_metric_deriv(x, a_BH, M_BH, dginv);
-        real p_contra[4];
-        for (int mu=0; mu<4; ++mu) {
-          real sum = 0.0;
-          for (int nu=0; nu<4; ++nu) sum += ginv[mu][nu] * p_cov[nu];
-          p_contra[mu] = sum;
-        }
-        for (int mu=0; mu<4; ++mu) dstates[mu] = p_contra[mu];
-        for (int mu=0; mu<4; ++mu) {
-          real sum = 0.0;
-          for (int alpha=0; alpha<4; ++alpha) {
-            for (int beta=0; beta<4; ++beta) {
-              sum += dginv[mu][alpha][beta] * p_cov[alpha] * p_cov[beta];
-            }
-          }
-          dstates[4 + mu] = -0.5 * sum;
-        }
-        return;
+        kerr_schild::compute_hamiltonian_rhs(state, state + 4, a_BH, M_BH, dstates);
     }
 
     // rk4_step/rk45_step below duplicate rk_detail::rk4_step/rk45_step's
@@ -151,17 +84,13 @@ struct Geodesic_cartesian_kerr_schild {
         }
     }
 
-    // Returns 1/0 (accepted/rejected) rather than a bool; error_out/finite_out
-    // are optional (pass nullptr to skip). dlambda/state are pointers into
-    // operator()'s own thread-local locals -- see the caller below for why
-    // this must never be a pointer to a live Kokkos::View element instead.
+    // The adaptive step remains thread-local until the retry loop finishes;
+    // device backends must not pass a live View element through a nested pointer.
     KOKKOS_FUNCTION
     int rk45_step(
         real* state,
         real* dlambda,
-        const real* k1,
-        real* error_out,
-        int* finite_out
+        const real* k1
     ) const
     {
         const real a21 = 1.0 / 4.0;
@@ -203,9 +132,6 @@ struct Geodesic_cartesian_kerr_schild {
             if (!Kokkos::isfinite(x5[i]) || !Kokkos::isfinite(ratio)) finite = false;
             err = Kokkos::fmax(err, ratio);
         }
-
-        if (error_out) *error_out = err;
-        if (finite_out) *finite_out = finite ? 1 : 0;
 
         if (!finite) {
             *dlambda = dt_val * min_step_scale;
@@ -250,20 +176,16 @@ struct Geodesic_cartesian_kerr_schild {
         // Compute distance traveled for adaptive step sizing if needed
         real photon_distance = kerr_schild::compute_r(state[IX], state[IY], state[IZ], a_BH);
         if (photon_distance <= r_term_min) {
-            // Absorbed by the horizon: no radiation reaches the camera along this
-            // ray, so it contributes nothing to image_I/Q/U/V -- this is what
-            // makes the black-hole shadow visible in the observation image.
+            // Horizon-crossing rays contribute no radiation to the camera.
             photon_I(idx) = 0.0;
             photon_Q(idx) = 0.0;
             photon_U(idx) = 0.0;
             photon_V(idx) = 0.0;
             photon_terminate(idx) = true;
-            photon_termination_reason(idx) = 1;
             return;
         }
         if (photon_distance > r_term_max) {
             photon_terminate(idx) = true;
-            photon_termination_reason(idx) = 2;
             return;
         }
         
@@ -283,14 +205,13 @@ struct Geodesic_cartesian_kerr_schild {
             constexpr int max_rk45_attempts = 12;
 
             for (int attempt = 0; attempt < max_rk45_attempts; ++attempt) {
-                step_accepted = rk45_step(state, &dlambda_local, k1, nullptr, nullptr);
+                step_accepted = rk45_step(state, &dlambda_local, k1);
                 if (step_accepted) break;
             }
 
             photon_dlambda(idx) = dlambda_local;
             if (!step_accepted) {
                 photon_terminate(idx) = true;
-                photon_termination_reason(idx) = 3;
                 return;
             }
         }
@@ -299,7 +220,6 @@ struct Geodesic_cartesian_kerr_schild {
             // enum value reaches the device -- should never happen, but fail
             // loudly rather than quietly leaving the photon frozen.
             photon_terminate(idx) = true;
-            photon_termination_reason(idx) = 3;
             return;
         }
 
@@ -337,34 +257,35 @@ inline void integrate_geodesics(
     const Kokkos::View<real***>& Tgas,
     const int rank,
     Timers &timers,
+    const OutputSelection& output_selection,
     const ScatteringModel& scattering_model = ScatteringModel{},
     IntegratorType integrator = IntegratorType::RK45)
 {
+    // The current geodesic and scattering models do not yet sample the fluid
+    // grid, but the integration interface keeps it available for radiative transfer.
+    (void)r;
+    (void)theta;
+    (void)phi;
+    (void)rho;
+    (void)Tgas;
     float termination_fraction = 0.0f;
     const size_t num_photons = photons.x0.extent(0);
-    // Diagnostic accompanying the termination-fraction log line below -- see the
-    // photon_termination_reason comment in the functor above.
-    Kokkos::View<int*> termination_reason("termination_reason", num_photons);
-    timers.AddTimer({"Geodesic Integration", "MPI Counts Send/Recv", "Active Photons Calc",  "Output"});
-    for (auto current_step = 0; current_step < max_steps; current_step++)
+    timers.AddTimer({"Geodesic Integration", "Termination Count", "Output"});
+    for (int current_step = 0; current_step < max_steps; ++current_step)
     {
         timers.BeginTimer("Geodesic Integration");
-        Geodesic_cartesian_kerr_schild step_functor(photons, termination_reason, r, theta, phi, rho, Tgas,
-            r_min, r_max, theta_min, theta_max, phi_min, phi_max, dlog_r, nr, ntheta, nphi,
-            termination_r_min, termination_r_max, a_BH, M_BH,
+        Geodesic_cartesian_kerr_schild step_functor(photons, termination_r_min, termination_r_max, a_BH, M_BH,
             atol_default, rtol_default, min_scale, max_scale, safety,
             scattering_model, static_cast<std::size_t>(current_step), integrator);
         Kokkos::parallel_for(
-        "RK4 Cartesian Kerr-Schild Step",
+        "Integrate Cartesian Kerr-Schild Geodesics",
         Kokkos::RangePolicy<>(0, num_photons),
         step_functor
         );
         timers.EndTimer("Geodesic Integration");
-        // Siddhant: Can be converted to a pretty print function later
         if (current_step % output_interval == 0 || current_step == max_steps - 1) {
             Kokkos::fence();
-            timers.BeginTimer("MPI Counts Send/Recv");
-            // Get the number of terminated photons per process
+            timers.BeginTimer("Termination Count");
             int local_terminated = 0;
             Kokkos::parallel_reduce(
                 "Count Terminated Photons",
@@ -375,70 +296,28 @@ inline void integrate_geodesics(
                     }
                 }, local_terminated
             );
-            // Reduce across all MPI processes
             int global_terminated = 0;
             MPI_Allreduce(&local_terminated, &global_terminated, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
             termination_fraction = static_cast<float>(global_terminated) / static_cast<float>(nphotons);
-            // Histogram of *why* terminated photons were terminated (see
-            // photon_termination_reason above) -- summed across MPI ranks like
-            // global_terminated, so this stays meaningful with rank>1.
-            int local_reason_counts[3] = {0, 0, 0};
-            for (int reason = 1; reason <= 3; ++reason) {
-                int count = 0;
-                Kokkos::parallel_reduce(
-                    "Count Termination Reasons",
-                    Kokkos::RangePolicy<>(0, num_photons),
-                    KOKKOS_LAMBDA(const int i, int& local_count) {
-                        if (termination_reason(i) == reason) local_count += 1;
-                    }, count
-                );
-                local_reason_counts[reason - 1] = count;
-            }
-            int global_reason_counts[3] = {0, 0, 0};
-            MPI_Allreduce(local_reason_counts, global_reason_counts, 3, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            timers.EndTimer("Termination Count");
             if (rank == 0) {
                 INFO("After step " + std::to_string(current_step) + ", termination fraction: " + std::to_string(termination_fraction),
             Colors::hotpink);
-                INFO("  Termination reasons -- horizon: " + std::to_string(global_reason_counts[0]) +
-                     ", escaped range: " + std::to_string(global_reason_counts[1]) +
-                     ", RK45 rejected all attempts: " + std::to_string(global_reason_counts[2]),
-                     Colors::hotpink);
-                timers.PrintTimers(current_step);
             }
-            timers.EndTimer("MPI Counts Send/Recv");
-
-
-            timers.BeginTimer("Active Photons Calc");
-            // Copy to host and print photon positions
-            photons.copy_to_host();
-            // Find the indices of 5 photons that are not terminated
-            std::vector<size_t> active_photon_indices;
-            for (size_t i = 0; i < num_photons; i++) {
-                if (!photons.terminate_host(i)) {
-                    active_photon_indices.push_back(i);
-                }
-            }
-            // Pick 5 random active photons to display
-            std::shuffle(active_photon_indices.begin(), active_photon_indices.end(), std::default_random_engine(42));
-            for (size_t i = 0; i < std::min(size_t(5), active_photon_indices.size()); i++) {
-                INFO("Active Photon " + std::to_string(active_photon_indices[i]) + ": (t, x, y, z) = (" +
-                     std::to_string(photons.x0_host(active_photon_indices[i])) + ", " +
-                     std::to_string(photons.x1_host(active_photon_indices[i])) + ", " +
-                     std::to_string(photons.x2_host(active_photon_indices[i])) + ", " +
-                     std::to_string(photons.x3_host(active_photon_indices[i])) + "), Intensity = " +
-                     std::to_string(photons.I_host(active_photon_indices[i])) + ")");
-            }
-            timers.EndTimer("Active Photons Calc");
 
             timers.BeginTimer("Output");
-            write_photon_output(photons, current_step, rank);
-            write_observation_products(photons, current_step, rank);
+            write_output_step(photons, static_cast<std::size_t>(current_step), rank, output_selection);
             timers.EndTimer("Output");
+            if (rank == 0) {
+                timers.PrintTimers(current_step);
+            }
         }
         if (termination_fraction >= termination_percent) {
             break;
         }
     }
-    INFO("Rank " + std::to_string(rank) + ": Geodesic integration completed.");
+    if (rank == 0) {
+        INFO("Geodesic integration completed.");
+    }
     return;
 }

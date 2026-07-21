@@ -1,290 +1,15 @@
-/*
-    Load the HAMR data stored in numpy arrays and store them in Kokkos views
-*/
+// Load NumPy grid fields into rank-local execution-space Kokkos Views.
 #pragma once
+
+#include <array>
+#include <cmath>
+#include <fstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
 #include "../utils.hpp"
-#include "../output/display.hpp"
-
-
-// Function to load npy files into Kokkos views
-
-// 1D array loader
-template<typename T>
-inline void load_1d_numpy_array(   const std::string& filename, 
-                            Kokkos::View<T*>& kokkos_array
-                            ) {
-    // Load the npy file using cnpy
-    cnpy::NpyArray arr = cnpy::npy_load(filename);
-    
-    // Check dimensions
-    if (arr.shape.size() != 1) 
-    {
-        WARN("Expected 1D array in " + filename);
-        throw std::runtime_error("Expected 1D array in " + filename);
-    }
-    
-    size_t size = arr.shape[0];
-    
-    // Create a Kokkos view on the device
-    kokkos_array = Kokkos::View<T*>("loaded_array", size);
-    
-    // Create a mirror view on the host
-    auto host_array = Kokkos::create_mirror_view(kokkos_array);
-    
-    // Copy data from cnpy to host mirror
-    T* data_ptr = arr.data<T>();
-    for (size_t i = 0; i < size; ++i) {
-        host_array(i) = data_ptr[i];
-    }
-    
-    // Deep copy from host to device
-    Kokkos::deep_copy(kokkos_array, host_array);
-
-    if (verbose ) {
-        INFO("Loaded 1D numpy array from " + filename + " with " 
-                  + std::to_string(size) + " elements.");
-    }
-}
-
-//  2D array loader
-template<typename T>
-inline void load_2d_numpy_array(   const std::string& filename, 
-                            Kokkos::View<T**>& kokkos_array
-                            ) {
-    // Load the npy file using cnpy
-    cnpy::NpyArray arr = cnpy::npy_load(filename);
-
-    // Check dimensions
-    if (arr.shape.size() != 2) {
-        WARN("Expected 2D array in " + filename);
-        throw std::runtime_error("Expected 2D array in " + filename);
-    }
-
-    size_t dim0 = arr.shape[0];
-    size_t dim1 = arr.shape[1];
-
-    // Create a Kokkos view on the device
-    kokkos_array = Kokkos::View<T**>("loaded_array", dim0, dim1);
-
-    // Create a mirror view on the host
-    auto host_array = Kokkos::create_mirror_view(kokkos_array);
-
-    // Copy data from cnpy to host mirror
-    T* data_ptr = arr.data<T>();
-    for (size_t i = 0; i < dim0; ++i) {
-        for (size_t j = 0; j < dim1; ++j) {
-            host_array(i, j) = data_ptr[i * dim1 + j];
-        }
-    }
-
-    // Deep copy from host to device
-    Kokkos::deep_copy(kokkos_array, host_array);
-
-    if (verbose ) {
-        INFO("Loaded 2D numpy array from " + filename + " with dimensions [" 
-                  + std::to_string(dim0) + ", " + std::to_string(dim1) + "].");
-    }
-}
-
-// 3D array loader
-template<typename T>
-inline void load_3d_numpy_array(   const std::string& filename, 
-                            Kokkos::View<T***>& kokkos_array
-                            ) {
-    // Load the npy file using cnpy
-    cnpy::NpyArray arr = cnpy::npy_load(filename);
-    
-    // Check dimensions
-    if (arr.shape.size() != 3) {
-        WARN("Expected 3D array in " + filename);
-        throw std::runtime_error("Expected 3D array in " + filename);
-    }
-
-    size_t dim0 = arr.shape[0];
-    size_t dim1 = arr.shape[1];
-    size_t dim2 = arr.shape[2];
-
-    // Create a Kokkos view on the device
-    kokkos_array = Kokkos::View<T***>("loaded_array", dim0, dim1, dim2);
-
-    // Create a mirror view on the host
-    auto host_array = Kokkos::create_mirror_view(kokkos_array);
-
-    // Copy data from cnpy to host mirror
-    T* data_ptr = arr.data<T>();
-    for (size_t i = 0; i < dim0; ++i) {
-        for (size_t j = 0; j < dim1; ++j) {
-            for (size_t k = 0; k < dim2; ++k) {
-                host_array(i, j, k) = data_ptr[i * dim1 * dim2 + j * dim2 + k];
-            }
-        }
-    }
-
-    // Deep copy from host to device
-    Kokkos::deep_copy(kokkos_array, host_array);
-
-    if (verbose ) {
-        INFO("Loaded 3D numpy array from " + filename + " with dimensions [" 
-                  + std::to_string(dim0) + ", " + std::to_string(dim1) + ", " + std::to_string(dim2) + "].");
-    }
-}
-
-// 4D array loader
-template<typename T>
-inline void load_4d_numpy_array(   const std::string& filename, 
-                            Kokkos::View<T****>& kokkos_array
-                            ) {
-    // Load the npy file using cnpy
-    cnpy::NpyArray arr = cnpy::npy_load(filename);
-
-    // Check dimensions
-    if (arr.shape.size() != 4) {
-        WARN("Expected 4D array in " + filename);
-        throw std::runtime_error("Expected 4D array in " + filename);
-    }
-
-    size_t dim0 = arr.shape[0];
-    size_t dim1 = arr.shape[1];
-    size_t dim2 = arr.shape[2];
-    size_t dim3 = arr.shape[3];
-
-    // Create a Kokkos view on the device
-    kokkos_array = Kokkos::View<T****>("loaded_array", dim0, dim1, dim2, dim3);
-
-    // Create a mirror view on the host
-    auto host_array = Kokkos::create_mirror_view(kokkos_array);
-
-    // Copy data from cnpy to host mirror
-    T* data_ptr = arr.data<T>();
-    for (size_t i = 0; i < dim0; ++i) {
-        for (size_t j = 0; j < dim1; ++j) {
-            for (size_t k = 0; k < dim2; ++k) {
-                for (size_t l = 0; l < dim3; ++l) {
-                    host_array(i, j, k, l) = data_ptr[i * dim1 * dim2 * dim3 + j * dim2 * dim3 + k * dim3 + l];
-                }
-            }
-        }
-    }
-
-    // Deep copy from host to device
-    Kokkos::deep_copy(kokkos_array, host_array);
-
-    if (verbose ) {
-        INFO("Loaded 4D numpy array from " + filename + " with dimensions [" 
-                  + std::to_string(dim0) + ", " + std::to_string(dim1) + ", " 
-                  + std::to_string(dim2) + ", " + std::to_string(dim3) + "].");
-     }
-}
-
-template<typename T>
-inline void load_coordinate_array(const std::string coord_type, 
-                           const std::string& filename, 
-                           Kokkos::View<T*>& kokkos_array) {
-    
-    cnpy::NpyArray arr = cnpy::npy_load(filename);
-    // Check dimensions
-    if (arr.shape.size() != 1) 
-    {
-        WARN("Expected 1D array in " + filename);
-        throw std::runtime_error("Expected 1D array in " + filename);
-    }
-    
-    size_t size = arr.shape[0];
-    // Create a Kokkos view on the device
-    kokkos_array = Kokkos::View<T*>("loaded_array", size);
-    
-    // Create a mirror view on the host
-    auto host_array = Kokkos::create_mirror_view(kokkos_array);
-    
-    // Copy data from cnpy to host mirror
-    T* data_ptr = arr.data<T>();
-    for (size_t i = 0; i < size; ++i) {
-        host_array(i) = data_ptr[i];
-    }
-    
-    // Deep copy from host to device
-    Kokkos::deep_copy(kokkos_array, host_array);
-
-    if (verbose ) {
-        INFO("Loaded coordinate array for " + coord_type + " from " + filename + 
-                  " with " + std::to_string(size) + " elements.");
-    }
-    if (coord_type == "r") {
-        r_min = host_array(0);
-        r_max = host_array(size - 1);
-        nr = size;
-        dlog_r = log(host_array(1)/host_array(0));
-        // Check uniform spacing in log-space
-        for (size_t i = 1; i < size - 1; ++i) {
-            real dlogr_i = log(host_array(i+1)/host_array(i));
-            if (fabs(dlogr_i - dlog_r) > 1e-2) {
-                WARN("r coordinate array is not uniformly spaced in log-space.");
-                throw std::runtime_error("r coordinate array is not uniformly spaced in log-space.");
-            }
-        }
-        std::cout << std::endl;
-    }
-    else if (coord_type == "theta") {
-        theta_min = host_array(0);
-        theta_max = host_array(size - 1);
-        ntheta = size;
-        // Check uniform spacing
-        real dtheta = host_array(1) - host_array(0);
-        for (size_t i = 1; i < size - 1; ++i) {
-            real dtheta_i = host_array(i+1) - host_array(i);
-            if (fabs(dtheta_i - dtheta) > 1e-2) {
-                WARN("theta coordinate array is not uniformly spaced.");
-                throw std::runtime_error("theta coordinate array is not uniformly spaced.");
-            }
-        }
-        std::cout << std::endl;
-    }
-    else if (coord_type == "phi") {
-        phi_min = host_array(0);
-        phi_max = host_array(size - 1);
-        nphi = size;
-        // Check uniform spacing
-        real dphi = host_array(1) - host_array(0);
-        for (size_t i = 1; i < size - 1; ++i) {
-            real dphi_i = host_array(i+1) - host_array(i);
-            if (fabs(dphi_i - dphi) > 1e-2) {
-                WARN("phi coordinate array is not uniformly spaced.");
-                throw std::runtime_error("phi coordinate array is not uniformly spaced.");
-            }
-        }
-        std::cout << std::endl;
-    }
-    return;
-}
-
-// Load all the arrays needed for HAMR simulation
-// (This function can be expanded as needed to load specific arrays)
-inline void load_hamr_numpy_arrays(const std::string& base_path, 
-                            Kokkos::View<real*>& r,
-                            Kokkos::View<real*>& theta,
-                            Kokkos::View<real*>& phi, 
-                            Kokkos::View<real***>& rho,
-                            Kokkos::View<real***>& bsqr,
-                            Kokkos::View<real***>& pgas,
-                            Kokkos::View<real***>& Tgas,
-                            Kokkos::View<real***>& ug,
-                            Kokkos::View<real****>& bu,
-                            Kokkos::View<real****>& uu) {
-    load_coordinate_array<real>("r", base_path + "r.npy", r);
-    load_coordinate_array<real>("theta", base_path + "theta.npy", theta);
-    load_coordinate_array<real>("phi", base_path + "phi.npy", phi);
-    load_3d_numpy_array<real>(base_path + "rho.npy", rho);
-    load_3d_numpy_array<real>(base_path + "bsq.npy", bsqr);
-    load_3d_numpy_array<real>(base_path + "pgas.npy", pgas);
-    load_3d_numpy_array<real>(base_path + "Tgas.npy", Tgas);
-    load_3d_numpy_array<real>(base_path + "ug.npy", ug);
-    load_4d_numpy_array<real>(base_path + "bu.npy", bu);
-    load_4d_numpy_array<real>(base_path + "uu.npy", uu);
-    if (verbose) {
-        INFO("All HAMR numpy arrays loaded from base path: " + base_path);
-    }
-    return;
-}
+#include "domain_decomposition.hpp"
 
 struct NumpyFieldPaths {
     std::string r;
@@ -304,16 +29,179 @@ struct NumpyFieldViews {
     Kokkos::View<real***> temperature;
     Kokkos::View<real****> velocity;
     Kokkos::View<real****> magnetic;
+    DomainDecomposition decomposition;
+    std::array<std::size_t, 3> global_extents{0, 0, 0};
 };
 
-inline NumpyFieldViews load_numpy_field_bundle(const NumpyFieldPaths& paths) {
+inline std::vector<real> load_coordinate_values(const std::string& filename) {
+    const cnpy::NpyArray array = cnpy::npy_load(filename);
+    if (array.shape.size() != 1 || array.shape[0] < 2) {
+        throw std::runtime_error("Coordinate array must be one-dimensional with at least two values: " + filename);
+    }
+    if (array.descr != "<f8" && array.descr != "=f8") {
+        throw std::runtime_error("Grid arrays must use native/little-endian float64 values: " + filename);
+    }
+    const real* data = array.data<real>();
+    return std::vector<real>(data, data + array.shape[0]);
+}
+
+inline void validate_coordinate_spacing(const std::vector<real>& values,
+                                        const std::string& name,
+                                        bool logarithmic) {
+    const real spacing = logarithmic
+        ? std::log(values[1] / values[0])
+        : values[1] - values[0];
+    for (std::size_t i = 1; i + 1 < values.size(); ++i) {
+        const real current = logarithmic
+            ? std::log(values[i + 1] / values[i])
+            : values[i + 1] - values[i];
+        if (std::abs(current - spacing) > 1.0e-2) {
+            throw std::runtime_error(name + " coordinate array has non-uniform spacing");
+        }
+    }
+}
+
+inline Kokkos::View<real*> make_coordinate_view(const std::vector<real>& values,
+                                                IndexRange range,
+                                                const std::string& label) {
+    Kokkos::View<real*> view(label, range.size());
+    auto host = Kokkos::create_mirror_view(view);
+    for (std::size_t local = 0; local < range.size(); ++local) {
+        host(local) = values[range.begin + local];
+    }
+    Kokkos::deep_copy(view, host);
+    return view;
+}
+
+inline void validate_field_shape(const std::vector<std::size_t>& shape,
+                                 const std::array<std::size_t, 3>& expected,
+                                 std::size_t dimensions,
+                                 const std::string& filename) {
+    if (shape.size() != dimensions ||
+        shape[0] != expected[0] ||
+        shape[1] != expected[1] ||
+        shape[2] != expected[2]) {
+        throw std::runtime_error("Grid field has incompatible dimensions: " + filename);
+    }
+}
+
+inline cnpy::NpyHeader open_real_numpy_file(const std::string& filename,
+                                             std::ifstream& input) {
+    input.open(filename, std::ios::binary);
+    if (!input) throw std::runtime_error("Failed to open numpy file: " + filename);
+    cnpy::NpyHeader header = cnpy::read_npy_header(input, filename);
+    if (header.descr != "<f8" && header.descr != "=f8") {
+        throw std::runtime_error("Grid arrays must use native/little-endian float64 values: " + filename);
+    }
+    return header;
+}
+
+inline void read_numpy_values(std::ifstream& input,
+                              const cnpy::NpyHeader& header,
+                              std::size_t value_offset,
+                              real* destination,
+                              std::size_t value_count,
+                              const std::string& filename) {
+    const auto byte_offset = header.data_offset +
+        static_cast<std::streamoff>(value_offset * sizeof(real));
+    input.seekg(byte_offset);
+    input.read(reinterpret_cast<char*>(destination),
+               static_cast<std::streamsize>(value_count * sizeof(real)));
+    if (!input) throw std::runtime_error("Unexpected EOF while reading numpy data: " + filename);
+}
+
+inline Kokkos::View<real***> load_3d_numpy_array_slice(
+    const std::string& filename,
+    const std::array<std::size_t, 3>& global_extents,
+    const std::array<IndexRange, 3>& ranges) {
+    std::ifstream input;
+    const cnpy::NpyHeader header = open_real_numpy_file(filename, input);
+    validate_field_shape(header.shape, global_extents, 3, filename);
+
+    Kokkos::View<real***> view(
+        "loaded_3d_field", ranges[0].size(), ranges[1].size(), ranges[2].size());
+    auto host = Kokkos::create_mirror_view(view);
+    std::vector<real> row(ranges[2].size());
+    for (std::size_t i = 0; i < ranges[0].size(); ++i) {
+        const std::size_t gi = ranges[0].begin + i;
+        for (std::size_t j = 0; j < ranges[1].size(); ++j) {
+            const std::size_t gj = ranges[1].begin + j;
+            const std::size_t row_offset =
+                (gi * global_extents[1] + gj) * global_extents[2] + ranges[2].begin;
+            read_numpy_values(input, header, row_offset, row.data(), row.size(), filename);
+            for (std::size_t k = 0; k < row.size(); ++k) host(i, j, k) = row[k];
+        }
+    }
+    Kokkos::deep_copy(view, host);
+    return view;
+}
+
+inline Kokkos::View<real****> load_4d_numpy_array_slice(
+    const std::string& filename,
+    const std::array<std::size_t, 3>& global_extents,
+    const std::array<IndexRange, 3>& ranges) {
+    std::ifstream input;
+    const cnpy::NpyHeader header = open_real_numpy_file(filename, input);
+    validate_field_shape(header.shape, global_extents, 4, filename);
+    const std::size_t components = header.shape[3];
+    if (components != 4) {
+        throw std::runtime_error("Four-vector field must have four components: " + filename);
+    }
+
+    Kokkos::View<real****> view(
+        "loaded_4d_field", ranges[0].size(), ranges[1].size(), ranges[2].size(), components);
+    auto host = Kokkos::create_mirror_view(view);
+    std::vector<real> row(ranges[2].size() * components);
+    for (std::size_t i = 0; i < ranges[0].size(); ++i) {
+        const std::size_t gi = ranges[0].begin + i;
+        for (std::size_t j = 0; j < ranges[1].size(); ++j) {
+            const std::size_t gj = ranges[1].begin + j;
+            const std::size_t row_offset =
+                ((gi * global_extents[1] + gj) * global_extents[2] + ranges[2].begin) * components;
+            read_numpy_values(input, header, row_offset, row.data(), row.size(), filename);
+            for (std::size_t k = 0; k < ranges[2].size(); ++k) {
+                for (std::size_t component = 0; component < components; ++component) {
+                    host(i, j, k, component) = row[k * components + component];
+                }
+            }
+        }
+    }
+    Kokkos::deep_copy(view, host);
+    return view;
+}
+
+inline NumpyFieldViews load_numpy_field_bundle(
+    const NumpyFieldPaths& paths,
+    const DomainDecompositionSpec& decomposition_spec = DomainDecompositionSpec{},
+    int mpi_rank = 0,
+    int mpi_size = 1) {
+    const std::vector<real> r_values = load_coordinate_values(paths.r);
+    const std::vector<real> theta_values = load_coordinate_values(paths.theta);
+    const std::vector<real> phi_values = load_coordinate_values(paths.phi);
+    validate_coordinate_spacing(r_values, "r", true);
+    validate_coordinate_spacing(theta_values, "theta", false);
+    validate_coordinate_spacing(phi_values, "phi", false);
+
     NumpyFieldViews views;
-    load_coordinate_array<real>("r", paths.r, views.r);
-    load_coordinate_array<real>("theta", paths.theta, views.theta);
-    load_coordinate_array<real>("phi", paths.phi, views.phi);
-    load_3d_numpy_array<real>(paths.density, views.density);
-    load_3d_numpy_array<real>(paths.temperature, views.temperature);
-    load_4d_numpy_array<real>(paths.velocity, views.velocity);
-    load_4d_numpy_array<real>(paths.magnetic, views.magnetic);
+    views.global_extents = {r_values.size(), theta_values.size(), phi_values.size()};
+    views.decomposition = decomposition_spec.resolve(mpi_size, mpi_rank, views.global_extents);
+    views.r = make_coordinate_view(r_values, views.decomposition.ranges[0], "r");
+    views.theta = make_coordinate_view(theta_values, views.decomposition.ranges[1], "theta");
+    views.phi = make_coordinate_view(phi_values, views.decomposition.ranges[2], "phi");
+    views.density = load_3d_numpy_array_slice(paths.density, views.global_extents, views.decomposition.ranges);
+    views.temperature = load_3d_numpy_array_slice(paths.temperature, views.global_extents, views.decomposition.ranges);
+    views.velocity = load_4d_numpy_array_slice(paths.velocity, views.global_extents, views.decomposition.ranges);
+    views.magnetic = load_4d_numpy_array_slice(paths.magnetic, views.global_extents, views.decomposition.ranges);
+
+    nr = views.r.extent(0);
+    ntheta = views.theta.extent(0);
+    nphi = views.phi.extent(0);
+    r_min = r_values.front();
+    r_max = r_values.back();
+    theta_min = theta_values.front();
+    theta_max = theta_values.back();
+    phi_min = phi_values.front();
+    phi_max = phi_values.back();
+    dlog_r = std::log(r_values[1] / r_values[0]);
     return views;
 }

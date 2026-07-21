@@ -4,20 +4,14 @@ Analyze GR-ray-tracer photon output: post-hoc plots, plus a live terminal
 monitor (photon stats + an in-terminal x-y density histogram) that can run
 alongside the C++ binary while it is still writing output.
 
-File layout produced by src/output/write_output.hpp and
-src/radiative_transfer/observation.hpp, under --output-dir (default matches
-utils.hpp's `output_directory = "./output/"`):
+Each rank writes one `output_step_<step>_rank<rank>.npz` archive per checkpoint.
+The archive contains the fields selected by `output.variables` in the TOML
+configuration or `--output-variables` on the simulation command line.
 
-    photon_output_<step>_rank<rank>_<field>.npy
-        field in x0,x1,x2,x3 (t,x,y,z), k0,k1,k2,k3 (p_t,p_x,p_y,p_z covariant
-        momentum), I,Q,U,V (Stokes parameters)
-    observation_step_<step>_rank<rank>_<field>.npy
-        field in image_I,image_Q,image_U,image_V, lightcurve_I, spectrum_I
-
-Photon identity is (rank, local index) and is stable across steps -- the
-Photons Kokkos::View is fixed-size and terminated photons simply stop being
-updated rather than removed -- so per-photon quantities are tracked over time
-by concatenating ranks in sorted order at each step.
+When `id` is present, concatenated rank output is sorted by globally unique
+packet ID so trajectories remain aligned across steps. Without `id`, the
+fallback identity is (rank, local index), which is stable because terminated
+packets are not removed.
 
 image_I/Q/U/V (see build_observation_products() in
 src/radiative_transfer/observation.hpp) bin each photon by its FIXED
@@ -26,14 +20,14 @@ src/radiative_transfer/initialize_photons.hpp) over a range set by the active
 camera's screen geometry (image-plane camera: +-plane_dim1/2 x +-plane_dim2/2;
 pinhole camera: +-pinhole_aperture_radius square) -- NOT the photon's current,
 time-varying x/y position, and NOT a per-call min/max. So pixel (i, j) means
-the same camera-screen location in every observation_step_* dump, each dump is
+the same camera-screen location in every output checkpoint, each dump is
 one "photograph" of where photons-per-screen-pixel currently are, and (since
 the range depends only on config, not on the data) image products ARE
 directly comparable/summable across MPI ranks and across steps.
 
 Caveat that still applies: lightcurve_I (binned by coordinate time x0) and
-spectrum_I (binned by k0, an energy-like quantity) are each rescaled to
-*that call's own* local min/max, per rank, per dump -- so those two products
+spectrum_I (log-binned by frequency in Hz) are each rescaled to *that call's
+own* local min/max, per rank, per dump -- so those two products
 are NOT directly comparable across ranks or across steps, and this script
 plots them per-rank rather than pretending otherwise.
 
@@ -64,59 +58,59 @@ DEFAULT_PLANE_DIM1 = 20.0
 DEFAULT_PLANE_DIM2 = 20.0
 DEFAULT_PINHOLE_APERTURE_RADIUS = 50.0
 
-PHOTON_FIELDS = ["x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3", "I", "Q", "U", "V"]
-PHOTON_RE = re.compile(r"photon_output_(\d+)_rank(\d+)_(\w+)\.npy$")
-OBS_FIELDS = ["image_I", "image_Q", "image_U", "image_V", "lightcurve_I", "spectrum_I"]
-OBS_RE = re.compile(r"observation_step_(\d+)_rank(\d+)_(\w+)\.npy$")
+PHOTON_FIELDS = [
+    "id", "frequency", "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3",
+    "I", "Q", "U", "V", "dlambda", "terminate", "theta_disp", "phi_disp",
+]
+OBS_FIELDS = [
+    "image_I", "image_Q", "image_U", "image_V", "lightcurve_I",
+    "spectrum_frequency_hz", "spectrum_I",
+]
+OUTPUT_RE = re.compile(r"output_step_(\d+)_rank(\d+)\.npz$")
 
 
 # ---------------------------------------------------------------------------
 # Discovery / loading
 # ---------------------------------------------------------------------------
-def discover_photon_steps(output_dir: Path):
-    """{step: {rank: set(fields present)}} for photon_output_* files in output_dir."""
+def discover_output_steps(output_dir: Path):
+    """Return {step: set(ranks)} for complete, atomically published archives."""
     steps = {}
-    for f in output_dir.glob("photon_output_*.npy"):
-        m = PHOTON_RE.match(f.name)
+    for path in output_dir.glob("output_step_*_rank*.npz"):
+        m = OUTPUT_RE.match(path.name)
         if not m:
             continue
-        step, rank, field = int(m.group(1)), int(m.group(2)), m.group(3)
-        if field not in PHOTON_FIELDS:
-            continue
-        steps.setdefault(step, {}).setdefault(rank, set()).add(field)
+        step, rank = int(m.group(1)), int(m.group(2))
+        steps.setdefault(step, set()).add(rank)
     return steps
 
 
-def discover_observation_steps(output_dir: Path):
-    """{step: {rank: set(fields present)}} for observation_step_* files in output_dir."""
-    steps = {}
-    for f in output_dir.glob("observation_step_*.npy"):
-        m = OBS_RE.match(f.name)
-        if not m:
-            continue
-        step, rank, field = int(m.group(1)), int(m.group(2)), m.group(3)
-        if field not in OBS_FIELDS:
-            continue
-        steps.setdefault(step, {}).setdefault(rank, set()).add(field)
-    return steps
+def archive_path(output_dir: Path, step: int, rank: int):
+    return output_dir / f"output_step_{step}_rank{rank}.npz"
 
 
 def load_photon_step(output_dir: Path, step: int, ranks):
-    """Concatenate all photon fields for `step` across sorted `ranks`."""
-    data = {f: [] for f in PHOTON_FIELDS}
+    """Concatenate photon arrays available on every requested rank."""
+    rank_data = []
     for rank in sorted(ranks):
-        for f in PHOTON_FIELDS:
-            data[f].append(np.load(output_dir / f"photon_output_{step}_rank{rank}_{f}.npy"))
-    return {f: np.concatenate(v) for f, v in data.items()}
+        with np.load(archive_path(output_dir, step, rank)) as archive:
+            rank_data.append({name: archive[name] for name in archive.files if name in PHOTON_FIELDS})
+    common_fields = set.intersection(*(set(data) for data in rank_data)) if rank_data else set()
+    combined = {
+        field: np.concatenate([data[field] for data in rank_data])
+        for field in PHOTON_FIELDS if field in common_fields
+    }
+    if "id" in combined:
+        order = np.argsort(combined["id"], kind="stable")
+        combined = {field: values[order] for field, values in combined.items()}
+    return combined
 
 
 def load_observation_step(output_dir: Path, step: int, ranks):
-    """{rank: {field: array}} for observation products at `step` (kept per-rank, see module docstring)."""
+    """Load observation arrays without combining rank-local histogram axes."""
     out = {}
     for rank in sorted(ranks):
-        out[rank] = {
-            f: np.load(output_dir / f"observation_step_{step}_rank{rank}_{f}.npy") for f in OBS_FIELDS
-        }
+        with np.load(archive_path(output_dir, step, rank)) as archive:
+            out[rank] = {name: archive[name] for name in archive.files if name in OBS_FIELDS}
     return out
 
 
@@ -161,11 +155,11 @@ def r_horizon(M, a):
 # Terminal stats line + likely-terminated heuristic
 # ---------------------------------------------------------------------------
 def likely_terminated_count(state, prev_state):
-    """Photons frozen (bitwise-identical x,y,z,p) since the previous saved step
-    never get their state touched again once terminate=true (see operator() in
-    integrate_cart_ks.hpp), so exact equality across a step is a reliable proxy
-    for termination -- `terminate` itself isn't written to disk."""
-    if prev_state is None:
+    """Use `terminate` when selected, otherwise infer frozen photon states."""
+    if "terminate" in state:
+        return int(np.count_nonzero(state["terminate"]))
+    required = {"x1", "x2", "x3", "k0", "k1", "k2", "k3"}
+    if prev_state is None or not required <= state.keys() or not required <= prev_state.keys():
         return None
     same = np.ones_like(state["x1"], dtype=bool)
     for f in ("x1", "x2", "x3", "k0", "k1", "k2", "k3"):
@@ -177,13 +171,14 @@ def format_stats_line(step, state, obs, prev_state):
     n = state["x1"].size
     terminated = likely_terminated_count(state, prev_state)
     term_str = f"{terminated:5d}" if terminated is not None else "  n/a"
+    intensity = f" | <I>={np.mean(state['I']):8.4f}" if "I" in state else ""
     return (
         f"step {step:>6d} | N={n:5d} | est.terminated={term_str} | "
         f"<r>={np.mean(obs['r']):8.3f} r_min={np.min(obs['r']):8.3f} | "
         f"<|H|>={np.mean(np.abs(obs['norm'])):9.2e} | "
         f"<E>={np.mean(obs['energy']):8.4f}+-{np.std(obs['energy']):.1e} | "
-        f"<Lz>={np.mean(obs['Lz']):8.4f}+-{np.std(obs['Lz']):.1e} | "
-        f"<I>={np.mean(state['I']):8.4f}"
+        f"<Lz>={np.mean(obs['Lz']):8.4f}+-{np.std(obs['Lz']):.1e}"
+        f"{intensity}"
     )
 
 
@@ -239,9 +234,9 @@ def cmd_post(args):
     plots_dir = Path(args.plots_dir) if args.plots_dir else output_dir / "analysis_plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    photon_steps = discover_photon_steps(output_dir)
+    photon_steps = discover_output_steps(output_dir)
     if not photon_steps:
-        sys.exit(f"No photon_output_*.npy files found under {output_dir}")
+        sys.exit(f"No output_step_*_rank*.npz files found under {output_dir}")
 
     steps_sorted = sorted(photon_steps)
     rh = r_horizon(args.mass, args.spin)
@@ -256,6 +251,11 @@ def cmd_post(args):
     for step in steps_sorted:
         ranks = photon_steps[step]
         state = load_photon_step(output_dir, step, ranks)
+        required = {"x1", "x2", "x3", "k0", "k1", "k2", "k3"}
+        if not required <= state.keys():
+            missing = ", ".join(sorted(required - state.keys()))
+            sys.exit("Post-hoc trajectory/conservation analysis requires output variables "
+                     f"x1,x2,x3,k0,k1,k2,k3; missing: {missing}")
         obs = compute_observables(state, args.mass, args.spin)
         all_state[step] = state
         all_obs[step] = obs
@@ -320,8 +320,14 @@ def cmd_post(args):
     # image_I/Q/U/V now bin by each photon's fixed screen coordinate over a
     # range set purely by camera config (see module docstring), so unlike
     # lightcurve/spectrum they're safe to sum across ranks into one image.
-    obs_steps = discover_observation_steps(output_dir)
-    if obs_steps:
+    obs_steps = photon_steps
+    first_obs_step = min(obs_steps)
+    first_obs_ranks = sorted(obs_steps[first_obs_step])
+    first_products = load_observation_step(output_dir, first_obs_step, first_obs_ranks)
+    common_obs_fields = set.intersection(*(set(first_products[rank]) for rank in first_obs_ranks))
+    image_fields = [field for field in ("image_I", "image_Q", "image_U", "image_V")
+                    if field in common_obs_fields]
+    if image_fields:
         half1, half2 = (args.plane_dim1 / 2.0, args.plane_dim2 / 2.0) if not args.pinhole \
             else (args.pinhole_aperture_radius, args.pinhole_aperture_radius)
         extent = [-half1, half1, -half2, half2]
@@ -332,40 +338,46 @@ def cmd_post(args):
             ranks = sorted(obs_steps[step])
             products = load_observation_step(output_dir, step, ranks)
 
-            fig, axes = plt.subplots(1, 4, figsize=(14, 3.5))
-            for col, field in enumerate(("image_I", "image_Q", "image_U", "image_V")):
+            fig, axes = plt.subplots(1, len(image_fields), figsize=(3.5 * len(image_fields), 3.5), squeeze=False)
+            for col, field in enumerate(image_fields):
                 combined = np.zeros_like(products[ranks[0]][field])
                 for rank in ranks:
                     combined += products[rank][field]
-                im = axes[col].imshow(combined.T, origin="lower", cmap="inferno", extent=extent)
-                axes[col].set_title(field)
-                axes[col].set_xlabel("screen u")
-                axes[col].set_ylabel("screen v")
-                fig.colorbar(im, ax=axes[col], fraction=0.046)
+                im = axes[0, col].imshow(combined, origin="lower", cmap="inferno", extent=extent)
+                axes[0, col].set_title(field)
+                axes[0, col].set_xlabel("screen u")
+                axes[0, col].set_ylabel("screen v")
+                fig.colorbar(im, ax=axes[0, col], fraction=0.046)
             fig.suptitle(f"Observation image at step {step} (summed over {len(ranks)} rank(s))")
             fig.tight_layout()
             fig.savefig(images_dir / f"observation_image_step_{step:06d}.png", dpi=150)
             plt.close(fig)
         print(f"Wrote {len(obs_steps)} per-dump observation image(s) to {images_dir}")
 
+    else:
+        print("No image arrays were selected -- skipping observation image plots.")
+
+    series_fields = [field for field in ("lightcurve_I", "spectrum_I") if field in common_obs_fields]
+    if series_fields:
         last_obs_step = max(obs_steps)
         ranks = sorted(obs_steps[last_obs_step])
         products = load_observation_step(output_dir, last_obs_step, ranks)
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-        for rank in ranks:
-            ax1.plot(products[rank]["lightcurve_I"], label=f"rank {rank}")
-            ax2.plot(products[rank]["spectrum_I"], label=f"rank {rank}")
-        ax1.set_title("Lightcurve I (per-rank local time bins)")
-        ax1.set_xlabel("time bin")
-        ax2.set_title("Spectrum I (per-rank local frequency bins)")
-        ax2.set_xlabel("frequency bin")
-        ax1.legend()
-        ax2.legend()
+        fig, axes = plt.subplots(1, len(series_fields), figsize=(6 * len(series_fields), 4), squeeze=False)
+        for col, field in enumerate(series_fields):
+            for rank in ranks:
+                x_values = np.arange(products[rank][field].size)
+                if field == "spectrum_I" and "spectrum_frequency_hz" in products[rank]:
+                    x_values = products[rank]["spectrum_frequency_hz"]
+                    axes[0, col].set_xscale("log")
+                    axes[0, col].set_xlabel("frequency (Hz)")
+                axes[0, col].plot(x_values, products[rank][field], label=f"rank {rank}")
+            axes[0, col].set_title(f"{field} (per-rank local bins)")
+            if field != "spectrum_I" or "spectrum_frequency_hz" not in products[ranks[0]]:
+                axes[0, col].set_xlabel("bin")
+            axes[0, col].legend()
         fig.tight_layout()
         fig.savefig(plots_dir / "lightcurve_spectrum.png", dpi=150)
         plt.close(fig)
-    else:
-        print("No observation_step_*.npy files found -- skipping image/lightcurve/spectrum plots.")
 
     print(f"\nPlots written to {plots_dir}")
 
@@ -389,7 +401,7 @@ def cmd_watch(args):
     ylim = tuple(args.ylim) if args.ylim else None
     bbox = None  # running [xlo, xhi, ylo, yhi] used when xlim/ylim not pinned by the user
 
-    print(f"Watching {output_dir} for new photon_output_* steps (Ctrl+C to stop)...")
+    print(f"Watching {output_dir} for new output archives (Ctrl+C to stop)...")
     seen_steps = set()
     known_ranks = set()
     prev_state = None
@@ -397,21 +409,25 @@ def cmd_watch(args):
 
     try:
         while True:
-            steps = discover_photon_steps(output_dir)
+            steps = discover_output_steps(output_dir)
             for step in sorted(s for s in steps if s not in seen_steps):
                 ranks_for_step = steps[step]
                 known_ranks |= set(ranks_for_step)
                 expected_ranks = range(args.mpi_size) if args.mpi_size else range(max(known_ranks) + 1)
-                ready = all(
-                    r in ranks_for_step and set(PHOTON_FIELDS) <= ranks_for_step[r] for r in expected_ranks
-                )
+                ready = all(r in ranks_for_step for r in expected_ranks)
                 if not ready:
                     continue  # rank(s) haven't finished writing this step yet
 
                 try:
                     state = load_photon_step(output_dir, step, expected_ranks)
                 except (OSError, ValueError):
-                    continue  # file(s) mid-write; retry next poll
+                    continue
+
+                required = {"x1", "x2", "x3", "k0", "k1", "k2", "k3"}
+                if not required <= state.keys():
+                    missing = ", ".join(sorted(required - state.keys()))
+                    sys.exit("Live monitoring requires output variables x1,x2,x3,k0,k1,k2,k3; "
+                             f"missing: {missing}")
 
                 seen_steps.add(step)
                 obs = compute_observables(state, args.mass, args.spin)

@@ -1,5 +1,5 @@
 # Build output
-build/
+build*/
 cmake-build-*/
 
 # Simulation output / generated data (repo-root only -- not src/output/, the source dir)

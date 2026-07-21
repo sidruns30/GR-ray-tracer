@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -9,8 +10,9 @@
 struct SimulationOptions {
     NumpyFieldPaths fields;
     std::string output_dir = output_directory;
-    std::string config_path; // optional TOML file overriding utils.hpp defaults, see input/toml_config.hpp
-    bool vacuum = false; // skip loading grid/MHD data entirely; forces scattering off too
+    std::string config_path;
+    std::optional<std::string> output_variables;
+    bool vacuum = false;
     bool enable_scattering = false;
     real scattering_optical_depth = 0.0;
     real scattering_albedo = 1.0;
@@ -49,6 +51,7 @@ inline SimulationOptions parse_simulation_options(int argc, char* argv[]) {
         else if (flag == "--velocity") options.fields.velocity = next_value("--velocity");
         else if (flag == "--magnetic") options.fields.magnetic = next_value("--magnetic");
         else if (flag == "--output-dir") options.output_dir = next_value("--output-dir");
+        else if (flag == "--output-variables") options.output_variables = next_value("--output-variables");
         else if (flag == "--config") options.config_path = next_value("--config");
         else if (flag == "--vacuum") options.vacuum = true;
         else if (flag == "--scatter-optical-depth") options.scattering_optical_depth = std::stod(next_value("--scatter-optical-depth"));
@@ -71,4 +74,3 @@ inline SimulationOptions parse_simulation_options(int argc, char* argv[]) {
     }
     return options;
 }
-

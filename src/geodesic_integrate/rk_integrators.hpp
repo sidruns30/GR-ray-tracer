@@ -4,13 +4,7 @@
 
 namespace rk_detail {
 
-// state/dt/accepted etc. below are raw pointers rather than C++ references
-// (real&, real(&)[N]) -- on an H200/Hopper90 build, reference *output*
-// parameters on this templated function were observed to silently not
-// propagate writes back to the caller (dt/accepted/debug-out pointers all
-// came back at their untouched initial values), while compute_rhs's plain
-// pointer/array-decay output parameter worked correctly on the same
-// hardware. Pointers are the pattern already proven to work there.
+// Pointer outputs are used consistently across host and device compilers.
 template <std::size_t N, typename RHS>
 KOKKOS_FUNCTION
 inline void rk4_step(real* state, real dt, const RHS& rhs) {
@@ -39,11 +33,7 @@ inline void rk4_step(real* state, real dt, const RHS& rhs) {
 template <std::size_t N, typename RHS>
 KOKKOS_FUNCTION
 inline void rk45_step(real* state, real* dt, bool* accepted, const RHS& rhs, const real* k1,
-                      real atol, real rtol_, real min_step_scale, real max_step_scale, real safety_factor,
-                      // Optional diagnostics: when non-null, the computed err/finite
-                      // are written back regardless of accept/reject, so a caller can
-                      // log why a specific retry attempt failed.
-                      real* debug_err_out = nullptr, bool* debug_finite_out = nullptr) {
+                      real atol, real rtol_, real min_step_scale, real max_step_scale, real safety_factor) {
     const real a21 = 1.0 / 4.0;
     const real a31 = 3.0 / 32.0, a32 = 9.0 / 32.0;
     const real a41 = 1932.0 / 2197.0, a42 = -7200.0 / 2197.0, a43 = 7296.0 / 2197.0;
@@ -89,9 +79,6 @@ inline void rk45_step(real* state, real* dt, bool* accepted, const RHS& rhs, con
         if (!Kokkos::isfinite(x5[i]) || !Kokkos::isfinite(ratio)) finite = false;
         err = Kokkos::fmax(err, ratio);
     }
-
-    if (debug_err_out) *debug_err_out = err;
-    if (debug_finite_out) *debug_finite_out = finite;
 
     if (!finite) {
         *accepted = false;

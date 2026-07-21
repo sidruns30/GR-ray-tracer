@@ -7,8 +7,8 @@
       - blank lines and full-line/trailing '#' comments
       - '[section]' headers, kept purely for readability; keys are looked up
         by their dotted "section.key" name (e.g. "black_hole.mass")
-      - 'key = value' with value one of: true/false, a quoted string, or a
-        bare number (int/float)
+      - 'key = value' with a scalar value, plus the single-line string array
+        used by output.variables
     This deliberately avoids pulling in a full TOML dependency for a handful
     of scalar settings.
 */
@@ -19,9 +19,11 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "../utils.hpp"
 #include "../output/display.hpp"
+#include "domain_decomposition.hpp"
 
 namespace toml_config {
 
@@ -99,11 +101,20 @@ inline bool get_bool(const RawConfig& cfg, const std::string& key, bool fallback
     return it->second == "true";
 }
 
+inline std::string get_string(const RawConfig& cfg, const std::string& key, std::string fallback) {
+    const auto it = cfg.find(key);
+    return it == cfg.end() ? std::move(fallback) : it->second;
+}
+
 // Loads `path` and overwrites the runtime-configurable globals in utils.hpp.
 // Keys absent from the file keep whatever value the global already had (i.e.
 // the compiled-in defaults from utils.cpp), so a config file only needs to
 // specify the settings it wants to change.
-inline void load_and_apply_toml_config(const std::string& path) {
+inline void load_and_apply_toml_config(const std::string& path,
+                                       std::string& output_variables,
+                                       PhotonGenerationConfig& photon_generation,
+                                       UnitConversions& units,
+                                       DomainDecompositionSpec& decomposition) {
     const RawConfig cfg = parse_flat_toml(path);
 
     M_BH = get_real(cfg, "black_hole.mass", M_BH);
@@ -133,6 +144,36 @@ inline void load_and_apply_toml_config(const std::string& path) {
     camera_distance = get_real(cfg, "camera.distance", camera_distance);
 
     nphotons = get_int(cfg, "photons.count", nphotons);
+    photon_generation.generator = parse_photon_generator_type(
+        get_string(cfg, "photons.generator", "blackbody"));
+    photon_generation.superphotons_per_cell = get_int(
+        cfg, "photons.superphotons_per_cell", photon_generation.superphotons_per_cell);
+    photon_generation.energy_per_cell_erg = get_real(
+        cfg, "photons.energy_per_cell_erg", photon_generation.energy_per_cell_erg);
+    photon_generation.power_law_slope = get_real(
+        cfg, "photons.power_law_slope", photon_generation.power_law_slope);
+    photon_generation.nu_min_hz = get_real(cfg, "photons.nu_min_hz", photon_generation.nu_min_hz);
+    photon_generation.nu_max_hz = get_real(cfg, "photons.nu_max_hz", photon_generation.nu_max_hz);
+    photon_generation.camera_frequency_hz = get_real(
+        cfg, "photons.camera_frequency_hz", photon_generation.camera_frequency_hz);
+    photon_generation.camera_packet_energy_erg = get_real(
+        cfg, "photons.camera_packet_energy_erg", photon_generation.camera_packet_energy_erg);
+    photon_generation.custom_frequency_hz = get_real(
+        cfg, "photons.custom_frequency_hz", photon_generation.custom_frequency_hz);
+
+    units.length_cm_per_code = get_real(cfg, "units.length_cm_per_code", units.length_cm_per_code);
+    units.time_s_per_code = get_real(cfg, "units.time_s_per_code", units.time_s_per_code);
+    units.density_g_cm3_per_code = get_real(
+        cfg, "units.density_g_cm3_per_code", units.density_g_cm3_per_code);
+    units.temperature_k_per_code = get_real(
+        cfg, "units.temperature_k_per_code", units.temperature_k_per_code);
+    units.four_velocity_cm_s_per_code = get_real(
+        cfg, "units.four_velocity_cm_s_per_code", units.four_velocity_cm_s_per_code);
+    units.magnetic_gauss_per_code = get_real(
+        cfg, "units.magnetic_gauss_per_code", units.magnetic_gauss_per_code);
+
+    decomposition = DomainDecompositionSpec::parse(
+        get_string(cfg, "parallel.decomposition", "[1, 1, -1]"));
     max_steps = get_int(cfg, "integration.max_steps", max_steps);
     termination_percent = get_real(cfg, "integration.termination_percent", termination_percent);
     dlambda = get_real(cfg, "integration.initial_step", dlambda);
@@ -146,8 +187,19 @@ inline void load_and_apply_toml_config(const std::string& path) {
     termination_r_max = get_real(cfg, "termination.r_max", 1.5 * camera_distance);
 
     output_interval = get_size_t(cfg, "output.interval", output_interval);
+    output_variables = get_string(cfg, "output.variables", std::move(output_variables));
 
-    INFO("Loaded simulation config from " + path);
+    if (nphotons <= 0 || nphotons > 1000000000) {
+        throw std::runtime_error("photons.count must be in [1, 1000000000]");
+    }
+    if (max_steps <= 0) throw std::runtime_error("integration.max_steps must be positive");
+    if (output_interval == 0) throw std::runtime_error("output.interval must be positive");
+    if (termination_percent <= 0.0 || termination_percent > 1.0) {
+        throw std::runtime_error("integration.termination_percent must be in (0, 1]");
+    }
+    photon_generation.validate();
+    units.validate();
+
 }
 
 } // namespace toml_config

@@ -5,6 +5,8 @@
 #include "geodesic_integrate/integrate_cart_ks.hpp"
 #include "output/display.hpp"
 
+#include <limits>
+
 
 int main(int argc, char* argv[]) {
     SimulationOptions options;
@@ -15,14 +17,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     output_directory = options.output_dir;
-    // write_output.hpp/observation.hpp build file paths by concatenating
-    // output_directory directly with filenames (no path separator inserted),
-    // so a --output-dir without a trailing slash would otherwise spill files
-    // into the current directory with a mashed-together name instead of the
-    // intended subdirectory.
-    if (!output_directory.empty() && output_directory.back() != '/') {
-        output_directory += '/';
-    }
+    std::string output_variables(default_output_variables);
+    PhotonGenerationConfig photon_generation;
+    UnitConversions units;
+    DomainDecompositionSpec decomposition_spec;
 
     // Initialize MPI
     int mpi_rank, mpi_size;
@@ -37,7 +35,11 @@ int main(int argc, char* argv[]) {
 
     if (!options.config_path.empty()) {
         try {
-            toml_config::load_and_apply_toml_config(options.config_path);
+            toml_config::load_and_apply_toml_config(
+                options.config_path, output_variables, photon_generation, units, decomposition_spec);
+            if (mpi_rank == 0) {
+                INFO("Loaded simulation config from " + options.config_path);
+            }
         } catch (const std::exception& e) {
             if (mpi_rank == 0) {
                 ERROR(std::string("Failed to load config file: ") + e.what());
@@ -45,6 +47,30 @@ int main(int argc, char* argv[]) {
             MPI_Finalize();
             return 1;
         }
+    }
+
+    try {
+        photon_generation.validate();
+        units.validate();
+        decomposition_spec.resolve_partitions(mpi_size);
+    } catch (const std::exception& e) {
+        if (mpi_rank == 0) ERROR(std::string("Invalid runtime configuration: ") + e.what());
+        MPI_Finalize();
+        return 1;
+    }
+
+    if (options.output_variables) {
+        output_variables = *options.output_variables;
+    }
+    OutputSelection output_selection;
+    try {
+        output_selection = OutputSelection::parse(output_variables);
+    } catch (const std::exception& e) {
+        if (mpi_rank == 0) {
+            ERROR(std::string("Invalid output variable selection: ") + e.what());
+        }
+        MPI_Finalize();
+        return 1;
     }
 
     if (options.vacuum && options.enable_scattering) {
@@ -74,7 +100,7 @@ int main(int argc, char* argv[]) {
             if (paths.magnetic.empty()) paths.magnetic = "./mag.npy";
 
             try {
-                fields = load_numpy_field_bundle(paths);
+                fields = load_numpy_field_bundle(paths, decomposition_spec, mpi_rank, mpi_size);
             } catch (const std::exception& e) {
                 if (mpi_rank == 0) {
                     ERROR(std::string("Failed to load input grid data: ") + e.what());
@@ -90,9 +116,14 @@ int main(int argc, char* argv[]) {
             }
             timers.EndTimer("Load HAMR Data");
 
-            if (verbose && mpi_rank == 0) {
-                INFO("Grid dimensions: nr=" + std::to_string(nr) + ", ntheta=" + std::to_string(ntheta) + ", nphi=" +
-                std::to_string(nphi), Colors::cyan);
+            if (mpi_rank == 0) {
+                const auto partitions = fields.decomposition.partitions;
+                INFO("Global grid dimensions: nr=" + std::to_string(fields.global_extents[0]) +
+                     ", ntheta=" + std::to_string(fields.global_extents[1]) +
+                     ", nphi=" + std::to_string(fields.global_extents[2]), Colors::cyan);
+                INFO("MPI domain decomposition [r, theta, phi] = [" +
+                     std::to_string(partitions[0]) + ", " + std::to_string(partitions[1]) + ", " +
+                     std::to_string(partitions[2]) + "]", Colors::cyan);
                 INFO("r coordinate from " + std::to_string(r_min) + " to " + std::to_string(r_max), Colors::hotpink);
                 INFO("theta coordinate from " + std::to_string(theta_min) + " to " + std::to_string(theta_max), Colors::hotpink);
                 INFO("phi coordinate from " + std::to_string(phi_min) + " to " + std::to_string(phi_max), Colors::hotpink);
@@ -101,8 +132,42 @@ int main(int argc, char* argv[]) {
             INFO("Running in --vacuum mode: no grid/MHD data loaded, scattering disabled.", Colors::cyan);
         }
 
-        // Initialize a fraction of photons per mpi process for back tracing from camera
-        const int photons_per_process = nphotons / mpi_size;
+        const bool camera_mode = use_pinhole_camera || use_image_camera;
+        if (!camera_mode && options.vacuum) {
+            if (mpi_rank == 0) ERROR("Fluid-frame photon generation requires grid data; remove --vacuum.");
+            Kokkos::finalize();
+            MPI_Finalize();
+            return 1;
+        }
+
+        std::uint64_t local_photon_count = 0;
+        if (camera_mode) {
+            local_photon_count = static_cast<std::uint64_t>(
+                nphotons / mpi_size + (mpi_rank < nphotons % mpi_size ? 1 : 0));
+        } else {
+            local_photon_count = static_cast<std::uint64_t>(fields.r.extent(0)) *
+                fields.theta.extent(0) * fields.phi.extent(0) *
+                static_cast<std::uint64_t>(photon_generation.superphotons_per_cell);
+        }
+
+        std::uint64_t global_photon_count = 0;
+        MPI_Allreduce(&local_photon_count, &global_photon_count, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
+        if (global_photon_count > 1000000000ULL ||
+            local_photon_count > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+            if (mpi_rank == 0) ERROR("Generated photon count exceeds the supported ID or local-index range.");
+            Kokkos::finalize();
+            MPI_Finalize();
+            return 1;
+        }
+        nphotons = static_cast<int>(global_photon_count);
+        if (mpi_rank == 0) {
+            INFO("Global superphoton count: " + std::to_string(global_photon_count), Colors::cyan);
+        }
+        std::uint64_t global_id_offset_64 = 0;
+        MPI_Exscan(&local_photon_count, &global_id_offset_64, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
+        if (mpi_rank == 0) global_id_offset_64 = 0;
+        const auto global_id_offset = static_cast<std::uint32_t>(global_id_offset_64);
+        const int photons_per_process = static_cast<int>(local_photon_count);
         Photons photons(photons_per_process, "photons_");
 
         if (use_pinhole_camera) {
@@ -115,6 +180,8 @@ int main(int argc, char* argv[]) {
                 camera_phi,
                 mpi_rank,
                 mpi_size,
+                global_id_offset,
+                photon_generation,
                 photons
                 );
             timers.EndTimer("Initialize Pinhole Camera");
@@ -130,6 +197,8 @@ int main(int argc, char* argv[]) {
                 camera_phi,
                 mpi_rank,
                 mpi_size,
+                global_id_offset,
+                photon_generation,
                 photons
                 );
             timers.EndTimer("Initialize Image Camera");
@@ -141,18 +210,27 @@ int main(int argc, char* argv[]) {
             timers.BeginTimer("Initialize User-Defined Photons");
             initialize_photons_user(
                 photons_per_process,
+                mpi_rank,
+                global_id_offset,
+                fields.r, fields.theta, fields.phi,
+                fields.density, fields.temperature, fields.velocity, fields.magnetic,
+                photon_generation,
+                units,
                 photons
                 );
             timers.EndTimer("Initialize User-Defined Photons");
         }
 
-        INFO("=== Starting Geodesic Integration ===", Colors::cyan);
+        if (mpi_rank == 0) {
+            INFO("=== Starting Geodesic Integration ===", Colors::cyan);
+        }
 
         // Integrate geodesics
         integrate_geodesics(
             photons,
             fields.r, fields.theta, fields.phi, fields.density, fields.temperature,
             mpi_rank, timers,
+            output_selection,
             ScatteringModel{
                 options.enable_scattering,
                 options.scattering_optical_depth,
@@ -168,6 +246,5 @@ int main(int argc, char* argv[]) {
     
     // Finalize MPI
     MPI_Finalize();
-    std::cout << "MPI finalize called from rank " << mpi_rank << std::endl;
     return 0;
 }

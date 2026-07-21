@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -16,6 +17,7 @@ namespace cnpy {
 
 struct NpyArray {
     std::vector<size_t> shape;
+    std::string descr;
     std::vector<char> bytes;
 
     template <typename T>
@@ -29,6 +31,13 @@ struct NpyArray {
     }
 
     size_t num_bytes() const { return bytes.size(); }
+};
+
+struct NpyHeader {
+    std::vector<size_t> shape;
+    std::string descr;
+    size_t item_size = 0;
+    std::streamoff data_offset = 0;
 };
 
 inline std::string trim_copy(std::string s) {
@@ -100,12 +109,197 @@ inline std::string build_header(const std::string& descr, const std::vector<size
     return header;
 }
 
-inline NpyArray npy_load(const std::string& filename) {
-    std::ifstream in(filename, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("Failed to open numpy file: " + filename);
+template <typename Integer>
+inline void append_little_endian(std::vector<char>& bytes, Integer value) {
+    static_assert(std::is_integral_v<Integer>);
+    using Unsigned = std::make_unsigned_t<Integer>;
+    const Unsigned unsigned_value = static_cast<Unsigned>(value);
+    for (std::size_t i = 0; i < sizeof(Integer); ++i) {
+        bytes.push_back(static_cast<char>((unsigned_value >> (8 * i)) & 0xffu));
+    }
+}
+
+template <typename T>
+inline std::vector<char> make_npy_bytes(const T* data, const std::vector<size_t>& shape) {
+    const std::string header = build_header(header_descr_for(typeid(T), sizeof(T)), shape);
+    if (header.size() > std::numeric_limits<std::uint16_t>::max()) {
+        throw std::runtime_error("NumPy header is too large for format version 1");
     }
 
+    std::vector<char> bytes;
+    const std::size_t data_size = product(shape) * sizeof(T);
+    bytes.reserve(10 + header.size() + data_size);
+    const char magic[] = "\x93NUMPY";
+    bytes.insert(bytes.end(), magic, magic + 6);
+    bytes.push_back(1);
+    bytes.push_back(0);
+    append_little_endian(bytes, static_cast<std::uint16_t>(header.size()));
+    bytes.insert(bytes.end(), header.begin(), header.end());
+    if (data_size > 0) {
+        if (!data) throw std::runtime_error("Cannot serialize a null NumPy data pointer");
+        const char* raw_data = reinterpret_cast<const char*>(data);
+        bytes.insert(bytes.end(), raw_data, raw_data + data_size);
+    }
+    return bytes;
+}
+
+inline std::uint32_t crc32(const std::vector<char>& bytes) {
+    std::uint32_t crc = 0xffffffffu;
+    for (const unsigned char byte : bytes) {
+        crc ^= byte;
+        for (int bit = 0; bit < 8; ++bit) {
+            crc = (crc >> 1) ^ (0xedb88320u & (0u - (crc & 1u)));
+        }
+    }
+    return ~crc;
+}
+
+// Writes an uncompressed .npz archive. NumPy reads stored ZIP members directly,
+// and avoiding compression keeps checkpoints fast and dependency-free.
+class NpzWriter {
+public:
+    explicit NpzWriter(const std::string& filename)
+        : out_(filename, std::ios::binary | std::ios::trunc) {
+        if (!out_) {
+            throw std::runtime_error("Failed to open output NumPy archive: " + filename);
+        }
+    }
+
+    NpzWriter(const NpzWriter&) = delete;
+    NpzWriter& operator=(const NpzWriter&) = delete;
+
+    template <typename T>
+    void add(const std::string& name, const T* data, const std::vector<size_t>& shape) {
+        if (closed_) {
+            throw std::runtime_error("Cannot add an array to a closed NumPy archive");
+        }
+
+        const std::string member_name = name + ".npy";
+        const std::vector<char> payload = make_npy_bytes(data, shape);
+        if (member_name.size() > std::numeric_limits<std::uint16_t>::max() ||
+            payload.size() > std::numeric_limits<std::uint32_t>::max() ||
+            offset_ > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::runtime_error("NumPy archive exceeds the non-ZIP64 size limit");
+        }
+
+        Entry entry{
+            member_name,
+            crc32(payload),
+            static_cast<std::uint32_t>(payload.size()),
+            static_cast<std::uint32_t>(offset_)
+        };
+
+        std::vector<char> header;
+        append_little_endian(header, std::uint32_t{0x04034b50});
+        append_little_endian(header, std::uint16_t{20});
+        append_little_endian(header, std::uint16_t{0});
+        append_little_endian(header, std::uint16_t{0});
+        append_little_endian(header, std::uint16_t{0});
+        append_little_endian(header, std::uint16_t{0});
+        append_little_endian(header, entry.crc);
+        append_little_endian(header, entry.size);
+        append_little_endian(header, entry.size);
+        append_little_endian(header, static_cast<std::uint16_t>(member_name.size()));
+        append_little_endian(header, std::uint16_t{0});
+
+        write(header);
+        out_.write(member_name.data(), static_cast<std::streamsize>(member_name.size()));
+        out_.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+        ensure_write_succeeded();
+        offset_ += header.size() + member_name.size() + payload.size();
+        entries_.push_back(std::move(entry));
+    }
+
+    void close() {
+        if (closed_) return;
+        if (entries_.size() > std::numeric_limits<std::uint16_t>::max()) {
+            throw std::runtime_error("NumPy archive contains too many arrays");
+        }
+
+        const std::uint64_t central_directory_offset = offset_;
+        for (const Entry& entry : entries_) {
+            std::vector<char> header;
+            append_little_endian(header, std::uint32_t{0x02014b50});
+            append_little_endian(header, std::uint16_t{20});
+            append_little_endian(header, std::uint16_t{20});
+            append_little_endian(header, std::uint16_t{0});
+            append_little_endian(header, std::uint16_t{0});
+            append_little_endian(header, std::uint16_t{0});
+            append_little_endian(header, std::uint16_t{0});
+            append_little_endian(header, entry.crc);
+            append_little_endian(header, entry.size);
+            append_little_endian(header, entry.size);
+            append_little_endian(header, static_cast<std::uint16_t>(entry.name.size()));
+            append_little_endian(header, std::uint16_t{0});
+            append_little_endian(header, std::uint16_t{0});
+            append_little_endian(header, std::uint16_t{0});
+            append_little_endian(header, std::uint16_t{0});
+            append_little_endian(header, std::uint32_t{0});
+            append_little_endian(header, entry.local_header_offset);
+            write(header);
+            out_.write(entry.name.data(), static_cast<std::streamsize>(entry.name.size()));
+            ensure_write_succeeded();
+            offset_ += header.size() + entry.name.size();
+        }
+
+        const std::uint64_t central_directory_size = offset_ - central_directory_offset;
+        if (central_directory_offset > std::numeric_limits<std::uint32_t>::max() ||
+            central_directory_size > std::numeric_limits<std::uint32_t>::max()) {
+            throw std::runtime_error("NumPy archive exceeds the non-ZIP64 size limit");
+        }
+
+        std::vector<char> end;
+        append_little_endian(end, std::uint32_t{0x06054b50});
+        append_little_endian(end, std::uint16_t{0});
+        append_little_endian(end, std::uint16_t{0});
+        append_little_endian(end, static_cast<std::uint16_t>(entries_.size()));
+        append_little_endian(end, static_cast<std::uint16_t>(entries_.size()));
+        append_little_endian(end, static_cast<std::uint32_t>(central_directory_size));
+        append_little_endian(end, static_cast<std::uint32_t>(central_directory_offset));
+        append_little_endian(end, std::uint16_t{0});
+        write(end);
+        out_.close();
+        if (!out_) {
+            throw std::runtime_error("Failed to finalize NumPy archive");
+        }
+        closed_ = true;
+    }
+
+    ~NpzWriter() {
+        if (!closed_) {
+            try {
+                close();
+            } catch (...) {
+            }
+        }
+    }
+
+private:
+    struct Entry {
+        std::string name;
+        std::uint32_t crc;
+        std::uint32_t size;
+        std::uint32_t local_header_offset;
+    };
+
+    void write(const std::vector<char>& bytes) {
+        out_.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        ensure_write_succeeded();
+    }
+
+    void ensure_write_succeeded() const {
+        if (!out_) {
+            throw std::runtime_error("Failed while writing NumPy archive");
+        }
+    }
+
+    std::ofstream out_;
+    std::vector<Entry> entries_;
+    std::uint64_t offset_ = 0;
+    bool closed_ = false;
+};
+
+inline NpyHeader read_npy_header(std::istream& in, const std::string& filename) {
     char magic[6];
     in.read(magic, 6);
     if (std::strncmp(magic, "\x93NUMPY", 6) != 0) {
@@ -129,30 +323,42 @@ inline NpyArray npy_load(const std::string& filename) {
 
     std::string header(header_len, '\0');
     in.read(header.data(), static_cast<std::streamsize>(header_len));
-    auto shape = parse_shape(header);
+    NpyHeader result;
+    result.shape = parse_shape(header);
 
-    std::string descr;
     const auto descr_pos = header.find("'descr':");
     if (descr_pos == std::string::npos) {
         throw std::runtime_error("Missing dtype descriptor in " + filename);
     }
     const auto first_quote = header.find('\'', descr_pos + 8);
     const auto second_quote = header.find('\'', first_quote + 1);
-    descr = header.substr(first_quote + 1, second_quote - first_quote - 1);
+    result.descr = header.substr(first_quote + 1, second_quote - first_quote - 1);
 
     if (header.find("fortran_order': True") != std::string::npos) {
         throw std::runtime_error("Fortran-ordered arrays are not supported: " + filename);
     }
 
-    const size_t count = product(shape);
-    const size_t item_size = descr.size() >= 2 ? static_cast<size_t>(std::stoul(descr.substr(2))) : 0;
-    if (item_size == 0) {
+    result.item_size = result.descr.size() >= 2
+        ? static_cast<size_t>(std::stoul(result.descr.substr(2))) : 0;
+    if (result.item_size == 0) {
         throw std::runtime_error("Could not parse numpy item size in " + filename);
     }
+    result.data_offset = in.tellg();
+    if (!in) throw std::runtime_error("Failed to read numpy header: " + filename);
+    return result;
+}
+
+inline NpyArray npy_load(const std::string& filename) {
+    std::ifstream in(filename, std::ios::binary);
+    if (!in) {
+        throw std::runtime_error("Failed to open numpy file: " + filename);
+    }
+    NpyHeader header = read_npy_header(in, filename);
 
     NpyArray arr;
-    arr.shape = std::move(shape);
-    arr.bytes.resize(count * item_size);
+    arr.shape = std::move(header.shape);
+    arr.descr = std::move(header.descr);
+    arr.bytes.resize(product(arr.shape) * header.item_size);
     in.read(arr.bytes.data(), static_cast<std::streamsize>(arr.bytes.size()));
     if (static_cast<size_t>(in.gcount()) != arr.bytes.size()) {
         throw std::runtime_error("Unexpected EOF while reading numpy data: " + filename);
@@ -167,19 +373,11 @@ inline void npy_save(const std::string& filename, const T* data, const std::vect
         throw std::runtime_error("Failed to open output numpy file: " + filename);
     }
 
-    const std::string descr = header_descr_for(typeid(T), sizeof(T));
-    const std::string header = build_header(descr, shape);
-
-    const char magic[] = "\x93NUMPY";
-    out.write(magic, 6);
-    const unsigned char major = 1;
-    const unsigned char minor = 0;
-    out.write(reinterpret_cast<const char*>(&major), 1);
-    out.write(reinterpret_cast<const char*>(&minor), 1);
-    const uint16_t header_len = static_cast<uint16_t>(header.size());
-    out.write(reinterpret_cast<const char*>(&header_len), 2);
-    out.write(header.data(), static_cast<std::streamsize>(header.size()));
-    out.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(product(shape) * sizeof(T)));
+    const std::vector<char> bytes = make_npy_bytes(data, shape);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    if (!out) {
+        throw std::runtime_error("Failed while writing numpy file: " + filename);
+    }
 }
 
 } // namespace cnpy

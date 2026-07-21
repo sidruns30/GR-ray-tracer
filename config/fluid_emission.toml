@@ -1,0 +1,41 @@
+# Fluid-frame superphoton example. Adjust all unit factors for the simulation
+# that produced the NumPy arrays before using this for physical results.
+
+[black_hole]
+mass = 1.0
+spin = 0.9
+
+[camera]
+use_pinhole = false
+use_image = false
+
+[photons]
+generator = "blackbody"
+superphotons_per_cell = 4
+energy_per_cell_erg = 1.0e30
+power_law_slope = 2.0
+nu_min_hz = 1.0e9
+nu_max_hz = 1.0e20
+custom_frequency_hz = 2.30e11
+
+[units]
+length_cm_per_code = 1.0
+time_s_per_code = 1.0
+density_g_cm3_per_code = 1.0e-10
+temperature_k_per_code = 1.0e10
+four_velocity_cm_s_per_code = 2.99792458e10
+magnetic_gauss_per_code = 1.0e4
+
+[parallel]
+decomposition = [1, 1, -1]
+
+[integration]
+max_steps = 100
+termination_percent = 0.9
+initial_step = 0.01
+atol = 1.0e-8
+rtol = 1.0e-8
+
+[output]
+interval = 10
+variables = ["id", "frequency", "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3", "I", "terminate", "spectrum_frequency_hz", "spectrum_I"]

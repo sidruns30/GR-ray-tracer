@@ -44,5 +44,26 @@ int main() {
     const auto obs_null = compute_geodesic_observables(state_null, a_BH, M_BH);
     if (std::abs(obs_null.norm) >= 1e-10) return EXIT_FAILURE;
 
+    // The optimized Hamiltonian contraction must match the explicit metric
+    // derivative used by the original implementation.
+    real rhs[8];
+    kerr_schild::compute_hamiltonian_rhs(X, p_cov, a_BH, M_BH, rhs);
+    real ginv[4][4], dginv[4][4][4];
+    kerr_schild::compute_inverse_metric(X, a_BH, M_BH, ginv);
+    kerr_schild::compute_inverse_metric_deriv(X, a_BH, M_BH, dginv);
+    for (int mu = 0; mu < 4; ++mu) {
+        real expected_dx = 0.0;
+        for (int nu = 0; nu < 4; ++nu) expected_dx += ginv[mu][nu] * p_cov[nu];
+        if (std::abs(rhs[mu] - expected_dx) >= 1e-12) return EXIT_FAILURE;
+
+        real derivative_contraction = 0.0;
+        for (int alpha = 0; alpha < 4; ++alpha) {
+            for (int beta = 0; beta < 4; ++beta) {
+                derivative_contraction += dginv[mu][alpha][beta] * p_cov[alpha] * p_cov[beta];
+            }
+        }
+        if (std::abs(rhs[4 + mu] + 0.5 * derivative_contraction) >= 1e-12) return EXIT_FAILURE;
+    }
+
     return 0;
 }
