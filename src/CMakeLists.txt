@@ -65,6 +65,10 @@ if(BUILD_TESTING)
     target_link_libraries(test_scattering PRIVATE grraytracer_core)
     add_test(NAME scattering COMMAND test_scattering)
 
+    add_executable(test_radiative_transfer tests/test_radiative_transfer.cpp)
+    target_link_libraries(test_radiative_transfer PRIVATE grraytracer_core)
+    add_test(NAME radiative_transfer COMMAND test_radiative_transfer)
+
     add_executable(test_output_stride tests/test_output_stride.cpp)
     target_link_libraries(test_output_stride PRIVATE grraytracer_core)
     add_test(NAME output_stride COMMAND test_output_stride)
@@ -72,4 +76,11 @@ if(BUILD_TESTING)
     add_executable(test_simulation_options tests/test_simulation_options.cpp)
     target_link_libraries(test_simulation_options PRIVATE grraytracer_core)
     add_test(NAME simulation_options COMMAND test_simulation_options)
+
+    add_executable(test_photon_exchange tests/test_photon_exchange.cpp)
+    target_link_libraries(test_photon_exchange PRIVATE grraytracer_core)
+    add_test(
+        NAME photon_exchange
+        COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+                ${MPIEXEC_PREFLAGS} $<TARGET_FILE:test_photon_exchange> ${MPIEXEC_POSTFLAGS})
 endif()

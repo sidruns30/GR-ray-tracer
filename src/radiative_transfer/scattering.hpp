@@ -21,16 +21,13 @@ using ScatteringRandomPool =
 // `available` is set on the host only when every required field exists, so
 // vacuum integrations never enter the scattering path on the device.
 struct ScatteringFluidGrid {
-    Kokkos::View<real*> r;
-    Kokkos::View<real*> theta;
-    Kokkos::View<real*> phi;
+    Kokkos::View<real***> r;
+    Kokkos::View<real***> theta;
+    Kokkos::View<real***> phi;
     Kokkos::View<real***> density;
     Kokkos::View<real***> temperature;
     Kokkos::View<real****> velocity;
     Kokkos::View<real****> magnetic;
-    real radial_log_spacing = 0.0;
-    real polar_spacing = 0.0;
-    real azimuth_spacing = 0.0;
     real length_scale = 1.0;
     real time_scale = 1.0;
     real density_scale = 1.0;
@@ -42,57 +39,145 @@ struct ScatteringFluidGrid {
     bool available = false;
 };
 
-template <typename ViewType>
 KOKKOS_INLINE_FUNCTION
-int nearest_linear_coordinate(const ViewType& coordinates, real value, real spacing) {
-    if (coordinates.extent(0) == 0 || !(spacing > 0.0)) return -1;
-    int nearest = 0;
-    real best_distance = Kokkos::abs(value - coordinates(0));
-    for (std::size_t i = 1; i < coordinates.extent(0); ++i) {
-        const real distance = Kokkos::abs(value - coordinates(i));
-        if (distance < best_distance) {
-            nearest = static_cast<int>(i);
-            best_distance = distance;
-        }
-    }
-    return best_distance <= 0.500001 * spacing ? nearest : -1;
+real periodic_angle_distance(real lhs, real rhs) {
+    real distance = Kokkos::fmod(Kokkos::abs(lhs - rhs), 2.0 * PI);
+    return Kokkos::fmin(distance, 2.0 * PI - distance);
 }
 
 template <typename ViewType>
 KOKKOS_INLINE_FUNCTION
-int nearest_radial_coordinate(const ViewType& coordinates, real radius,
-                              real logarithmic_spacing) {
-    if (coordinates.extent(0) == 0 || !(radius > 0.0) ||
-        !(logarithmic_spacing > 0.0)) return -1;
+int nearest_radial_index(const ViewType& coordinates, real radius, int j, int k) {
+    if (coordinates.extent(0) == 0 || !(radius > 0.0)) return -1;
     int nearest = 0;
-    real best_distance = Kokkos::abs(Kokkos::log(radius / coordinates(0)));
+    const real first = coordinates(0, j, k);
+    if (!(first > 0.0)) return -1;
+    real best_distance = Kokkos::abs(Kokkos::log(radius / first));
     for (std::size_t i = 1; i < coordinates.extent(0); ++i) {
-        const real distance = Kokkos::abs(Kokkos::log(radius / coordinates(i)));
+        const real coordinate = coordinates(i, j, k);
+        if (!(coordinate > 0.0)) continue;
+        const real distance = Kokkos::abs(Kokkos::log(radius / coordinate));
         if (distance < best_distance) {
             nearest = static_cast<int>(i);
             best_distance = distance;
         }
     }
-    return best_distance <= 0.500001 * logarithmic_spacing ? nearest : -1;
+    return nearest;
 }
 
 template <typename ViewType>
 KOKKOS_INLINE_FUNCTION
-int nearest_azimuth_coordinate(const ViewType& coordinates, real azimuth,
-                               real spacing) {
-    if (coordinates.extent(0) == 0 || !(spacing > 0.0)) return -1;
+int nearest_polar_index(const ViewType& coordinates, real polar, int i, int k) {
+    if (coordinates.extent(1) == 0) return -1;
     int nearest = 0;
-    real best_distance = 2.0 * PI;
-    for (std::size_t i = 0; i < coordinates.extent(0); ++i) {
-        real distance = Kokkos::abs(azimuth - coordinates(i));
-        distance = Kokkos::fmod(distance, 2.0 * PI);
-        distance = Kokkos::fmin(distance, 2.0 * PI - distance);
+    real best_distance = Kokkos::abs(polar - coordinates(i, 0, k));
+    for (std::size_t j = 1; j < coordinates.extent(1); ++j) {
+        const real distance = Kokkos::abs(polar - coordinates(i, j, k));
         if (distance < best_distance) {
-            nearest = static_cast<int>(i);
+            nearest = static_cast<int>(j);
             best_distance = distance;
         }
     }
-    return best_distance <= 0.500001 * spacing ? nearest : -1;
+    return nearest;
+}
+
+template <typename ViewType>
+KOKKOS_INLINE_FUNCTION
+int nearest_azimuth_index(const ViewType& coordinates, real azimuth, int i, int j) {
+    if (coordinates.extent(2) == 0) return -1;
+    int nearest = 0;
+    real best_distance = periodic_angle_distance(azimuth, coordinates(i, j, 0));
+    for (std::size_t k = 1; k < coordinates.extent(2); ++k) {
+        const real distance = periodic_angle_distance(azimuth, coordinates(i, j, k));
+        if (distance < best_distance) {
+            nearest = static_cast<int>(k);
+            best_distance = distance;
+        }
+    }
+    return nearest;
+}
+
+template <typename ViewType>
+KOKKOS_INLINE_FUNCTION
+bool within_radial_cell(const ViewType& coordinates, real radius, int i, int j, int k) {
+    const real center = coordinates(i, j, k);
+    if (!(center > 0.0) || !(radius > 0.0)) return false;
+    const real center_distance = Kokkos::abs(Kokkos::log(radius / center));
+    if (coordinates.extent(0) == 1) return center_distance <= 1.0e-10;
+    real neighbor_span = 0.0;
+    if (i > 0 && coordinates(i - 1, j, k) > 0.0) {
+        neighbor_span = Kokkos::fmax(neighbor_span,
+            Kokkos::abs(Kokkos::log(center / coordinates(i - 1, j, k))));
+    }
+    if (static_cast<std::size_t>(i + 1) < coordinates.extent(0) &&
+        coordinates(i + 1, j, k) > 0.0) {
+        neighbor_span = Kokkos::fmax(neighbor_span,
+            Kokkos::abs(Kokkos::log(center / coordinates(i + 1, j, k))));
+    }
+    return center_distance <= 0.500001 * neighbor_span;
+}
+
+template <typename ViewType>
+KOKKOS_INLINE_FUNCTION
+bool within_polar_cell(const ViewType& coordinates, real polar, int i, int j, int k) {
+    const real center = coordinates(i, j, k);
+    const real center_distance = Kokkos::abs(polar - center);
+    if (coordinates.extent(1) == 1) return center_distance <= 1.0e-10;
+    real neighbor_span = 0.0;
+    if (j > 0) neighbor_span = Kokkos::fmax(
+        neighbor_span, Kokkos::abs(center - coordinates(i, j - 1, k)));
+    if (static_cast<std::size_t>(j + 1) < coordinates.extent(1)) {
+        neighbor_span = Kokkos::fmax(
+            neighbor_span, Kokkos::abs(center - coordinates(i, j + 1, k)));
+    }
+    return center_distance <= 0.500001 * neighbor_span;
+}
+
+template <typename ViewType>
+KOKKOS_INLINE_FUNCTION
+bool within_azimuth_cell(const ViewType& coordinates, real azimuth, int i, int j, int k) {
+    const real center = coordinates(i, j, k);
+    const real center_distance = periodic_angle_distance(azimuth, center);
+    if (coordinates.extent(2) == 1) return center_distance <= 1.0e-10;
+    real neighbor_span = 0.0;
+    if (k > 0) neighbor_span = Kokkos::fmax(
+        neighbor_span, periodic_angle_distance(center, coordinates(i, j, k - 1)));
+    if (static_cast<std::size_t>(k + 1) < coordinates.extent(2)) {
+        neighbor_span = Kokkos::fmax(
+            neighbor_span, periodic_angle_distance(center, coordinates(i, j, k + 1)));
+    }
+    return center_distance <= 0.500001 * neighbor_span;
+}
+
+template <typename RadialView, typename PolarView, typename AzimuthView>
+KOKKOS_INLINE_FUNCTION
+bool locate_structured_grid_cell(
+    const RadialView& radial_coordinates,
+    const PolarView& polar_coordinates,
+    const AzimuthView& azimuth_coordinates,
+    real radius, real polar, real azimuth,
+    int& i, int& j, int& k) {
+    if (radial_coordinates.extent(0) == 0 ||
+        radial_coordinates.extent(1) == 0 ||
+        radial_coordinates.extent(2) == 0) return false;
+
+    i = static_cast<int>(radial_coordinates.extent(0) / 2);
+    j = static_cast<int>(radial_coordinates.extent(1) / 2);
+    k = static_cast<int>(radial_coordinates.extent(2) / 2);
+    // Coordinate fields may be nonuniform and depend on every logical index.
+    // A few coordinate-descent passes find the nearest structured-grid cell
+    // without an exhaustive scan over all nr*ntheta*nphi cells.
+    for (int iteration = 0; iteration < 3; ++iteration) {
+        i = nearest_radial_index(radial_coordinates, radius, j, k);
+        if (i < 0) return false;
+        j = nearest_polar_index(polar_coordinates, polar, i, k);
+        if (j < 0) return false;
+        k = nearest_azimuth_index(azimuth_coordinates, azimuth, i, j);
+        if (k < 0) return false;
+    }
+    return within_radial_cell(radial_coordinates, radius, i, j, k) &&
+        within_polar_cell(polar_coordinates, polar, i, j, k) &&
+        within_azimuth_cell(azimuth_coordinates, azimuth, i, j, k);
 }
 
 // Samples the nearest local cell and constructs its orthonormal fluid tetrad
@@ -114,10 +199,12 @@ bool sample_scattering_fluid(const real state[8], const ScatteringFluidGrid& gri
         radius * state[IX] + grid.spin * state[IY]);
     if (azimuth < 0.0) azimuth += 2.0 * PI;
 
-    const int i = nearest_radial_coordinate(grid.r, radius, grid.radial_log_spacing);
-    const int j = nearest_linear_coordinate(grid.theta, polar, grid.polar_spacing);
-    const int k = nearest_azimuth_coordinate(grid.phi, azimuth, grid.azimuth_spacing);
-    if (i < 0 || j < 0 || k < 0) return false;
+    int i = -1;
+    int j = -1;
+    int k = -1;
+    if (!locate_structured_grid_cell(
+            grid.r, grid.theta, grid.phi,
+            radius, polar, azimuth, i, j, k)) return false;
 
     fluid.position_cm[0] = state[IX] * grid.length_scale;
     fluid.position_cm[1] = state[IY] * grid.length_scale;
@@ -135,7 +222,7 @@ bool sample_scattering_fluid(const real state[8], const ScatteringFluidGrid& gri
         spherical_magnetic[component] = grid.magnetic(i, j, k, component);
     }
     transform_spherical_four_vector_to_cartesian(
-        grid.r(i), grid.theta(j), grid.phi(k), grid.spin,
+        grid.r(i, j, k), grid.theta(i, j, k), grid.phi(i, j, k), grid.spin,
         spherical_velocity, fluid.coordinate_four_velocity_cm_s);
     for (int component = 0; component < 4; ++component) {
         fluid.coordinate_four_velocity_cm_s[component] *= grid.velocity_scale;
@@ -148,7 +235,7 @@ bool sample_scattering_fluid(const real state[8], const ScatteringFluidGrid& gri
 
     real cartesian_magnetic[4];
     transform_spherical_four_vector_to_cartesian(
-        grid.r(i), grid.theta(j), grid.phi(k), grid.spin,
+        grid.r(i, j, k), grid.theta(i, j, k), grid.phi(i, j, k), grid.spin,
         spherical_magnetic, cartesian_magnetic);
     for (int component = 0; component < 4; ++component) {
         cartesian_magnetic[component] *= grid.magnetic_scale;

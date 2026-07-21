@@ -9,20 +9,17 @@
 #include <utility>
 #include <vector>
 
-inline constexpr std::array<std::string_view, 25> available_output_variables = {
-    "id", "frequency",
+inline constexpr std::array<std::string_view, 20> available_output_variables = {
+    "id", "frequency", "emission_frame_energy",
     "x0", "x1", "x2", "x3",
     "k0", "k1", "k2", "k3",
     "I", "Q", "U", "V",
-    "dlambda", "terminate", "theta_disp", "phi_disp",
-    "image_I", "image_Q", "image_U", "image_V",
-    "lightcurve_I", "spectrum_frequency_hz", "spectrum_I"
+    "dlambda", "terminate", "phase", "theta_disp", "phi_disp"
 };
 
 inline constexpr std::string_view default_output_variables =
     "id,frequency,"
-    "x0,x1,x2,x3,k0,k1,k2,k3,I,Q,U,V,"
-    "image_I,image_Q,image_U,image_V,lightcurve_I,spectrum_frequency_hz,spectrum_I";
+    "x0,x1,x2,x3,k0,k1,k2,k3,I,Q,U,V,phase";
 
 class OutputSelection {
 public:
@@ -75,13 +72,6 @@ public:
 
     bool contains(std::string_view name) const {
         return std::find(names_.begin(), names_.end(), name) != names_.end();
-    }
-
-    bool needs_observation_products() const {
-        return std::any_of(names_.begin(), names_.end(), [](const std::string& name) {
-            return name.rfind("image_", 0) == 0 || name == "lightcurve_I" ||
-                   name == "spectrum_frequency_hz" || name == "spectrum_I";
-        });
     }
 
     const std::vector<std::string>& names() const { return names_; }

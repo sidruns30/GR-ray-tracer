@@ -1,13 +1,17 @@
 # Fluid-frame superphoton example. Adjust all unit factors for the simulation
 # that produced the NumPy arrays before using this for physical results.
 
+[simulation]
+mode = "disk"
+
+[input]
+vacuum = false
+# r.npy, theta.npy, and phi.npy are nonuniform-capable (nr, ntheta, nphi) arrays.
+numpy_dir = "."
+
 [black_hole]
 mass = 1.0
 spin = 0.9
-
-[camera]
-use_pinhole = false
-use_image = false
 
 [photons]
 generator = "blackbody"
@@ -32,6 +36,7 @@ magnetic_gauss_per_code = 1.0e4
 decomposition = [1, 1, -1]
 
 [integration]
+integrator = "rk45"
 max_steps = 100
 termination_percent = 0.9
 initial_step = 0.01
@@ -39,6 +44,21 @@ atol = 1.0e-8
 rtol = 1.0e-8
 
 [output]
+directory = "./output"
 interval = 10
 stride = 1
-variables = ["id", "frequency", "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3", "I", "terminate", "spectrum_frequency_hz", "spectrum_I"]
+variables = ["id", "frequency", "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3", "I", "terminate", "phase"]
+
+[scattering]
+enabled = false
+optical_depth = 0.0
+albedo = 1.0
+seed = 12345
+
+[radiative_transfer]
+# See src/radiative_transfer/radiative_transfer.hpp for the default grey
+# absorption/emission models and how to replace them with physical ones.
+absorption_enabled = false
+emission_enabled = false
+absorption_coefficient = 0.0
+emission_coefficient = 0.0

@@ -1,33 +1,34 @@
 # Example gr-ray-trace simulation config.
-# Pass with: ./gr-ray-trace --config config/example.toml
+# Run with: ./gr-ray-trace config/example.toml
 #
 # Any omitted key keeps its compiled-in default. This example also demonstrates
 # a physical temperature scale, so edit the conversion factors for your data.
+
+[simulation]
+mode = "image"                    # image or disk
+
+[input]
+# Both image and disk modes require the fluid/disk grid.
+# numpy_dir must contain r.npy, theta.npy, phi.npy, rho.npy, Tgas.npy, vel.npy, and mag.npy.
+# Coordinate and scalar files have shape (nr, ntheta, nphi); spacing may vary.
+vacuum = false
+numpy_dir = "."
 
 [black_hole]
 mass = 1.0   # M_BH, geometric units
 spin = 1.0   # a_BH; must satisfy |spin| <= mass, i.e. dimensionless spin a/M in [-1, 1] (|a/M| == 1 is extremal)
 
 [camera]
-use_pinhole = false
-use_image = true
-
-theta = 0.7853981633974483   # pi/4, pinhole camera polar angle
-phi = 0.7853981633974483     # pi/4, pinhole camera azimuthal angle
-target_r_min = 0.0
-target_r_max = 2.0
-
-plane_dim1 = 20.0           # image plane extent along theta_hat, in rg/c
-plane_dim2 = 20.0           # image plane extent along phi_hat, in rg/c
-plane_theta = 1.5707963267948966  # pi/2, image plane polar angle
-plane_phi = 0.7853981633974483    # pi/4, image plane azimuthal angle
-
+theta = 0.7853981633974483  # camera polar angle
+phi = 0.7853981633974483    # camera azimuthal angle
+width = 20.0                # image plane extent along theta_hat, in rg/c
+height = 20.0               # image plane extent along phi_hat, in rg/c
 distance = 10000.0          # camera distance from origin, in rg/c
 
 [photons]
-count = 20                        # total photons traced, split across MPI ranks
-# Used when both camera modes are false. One packet receives one sampled
-# frequency; its I value is the represented packet energy in erg.
+count = 20                        # global total, up to 100 billion, split across MPI ranks
+# Disk mode emits packets in every cell. Image mode uses the same generator
+# when a backward ray first reaches an emitting fluid cell.
 generator = "blackbody"           # blackbody, power-law, or custom
 superphotons_per_cell = 4
 energy_per_cell_erg = 1.0
@@ -37,9 +38,6 @@ energy_per_cell_erg = 1.0
 # nu_max_hz = 1.0e20
 # Custom-generator example; uncomment when generator = "custom".
 # custom_frequency_hz = 2.30e11
-# Camera-created packets are monochromatic unless the camera initializer is customized.
-camera_frequency_hz = 2.30e11
-camera_packet_energy_erg = 1.0
 
 [units]
 # Multiply each NumPy value by its factor before photon generation. For example,
@@ -57,6 +55,7 @@ magnetic_gauss_per_code = 1.0
 decomposition = [1, 1, -1]
 
 [integration]
+integrator = "rk45"          # rk4 or rk45
 max_steps = 10000
 termination_percent = 0.9     # stop once this fraction of photons has terminated
 initial_step = 0.1            # initial dlambda guess (scaled by camera_distance)
@@ -70,7 +69,31 @@ rtol = 1e-8
 # r_max = 500.0
 
 [output]
+directory = "./output"
 interval = 1                  # write one archive per rank every N steps
 stride = 1                    # write every Nth rank-local photon
-# Arrays included in each output_step_*.npz archive.
-variables = ["id", "frequency", "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3", "I", "Q", "U", "V", "image_I", "image_Q", "image_U", "image_V", "lightcurve_I", "spectrum_frequency_hz", "spectrum_I"]
+# Arrays included in each rank-local checkpoint. Image mode separately writes
+# a globally reduced image_products.npz after integration.
+variables = ["id", "frequency", "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3", "I", "Q", "U", "V", "terminate", "phase"]
+image_nx = 256
+image_ny = 256
+spectrum_bins = 128
+spectrum_min_hz = 1.0e8
+spectrum_max_hz = 1.0e22
+
+[scattering]
+enabled = false
+optical_depth = 0.0
+albedo = 1.0                  # 1.0 scatters; 0.0 absorbs
+seed = 12345
+
+[radiative_transfer]
+# Optical depth (absorption) only attenuates Stokes I/Q/U/V; emissivity only
+# adds to Stokes I. Both are independent, user-editable extension points --
+# see src/radiative_transfer/radiative_transfer.hpp for the default grey
+# models (density-weighted opacity, density*temperature-weighted emission)
+# and instructions for replacing them with physical coefficients.
+absorption_enabled = false
+emission_enabled = false
+absorption_coefficient = 0.0  # scales the default grey opacity
+emission_coefficient = 0.0    # scales the default grey emissivity

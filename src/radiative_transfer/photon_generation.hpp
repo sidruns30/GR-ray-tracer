@@ -44,8 +44,6 @@ struct PhotonGenerationConfig {
     real power_law_slope = 2.0;
     real nu_min_hz = 1.0e9;
     real nu_max_hz = 1.0e20;
-    real camera_frequency_hz = 2.30e11;
-    real camera_packet_energy_erg = 1.0;
     real custom_frequency_hz = 2.30e11;
 
     void validate() const {
@@ -54,12 +52,6 @@ struct PhotonGenerationConfig {
         }
         if (!(energy_per_cell_erg >= 0.0) || !Kokkos::isfinite(energy_per_cell_erg)) {
             throw std::runtime_error("photons.energy_per_cell_erg must be finite and non-negative");
-        }
-        if (!(camera_frequency_hz > 0.0) || !Kokkos::isfinite(camera_frequency_hz)) {
-            throw std::runtime_error("photons.camera_frequency_hz must be finite and positive");
-        }
-        if (!(camera_packet_energy_erg >= 0.0) || !Kokkos::isfinite(camera_packet_energy_erg)) {
-            throw std::runtime_error("photons.camera_packet_energy_erg must be finite and non-negative");
         }
         if (generator == PhotonGeneratorType::PowerLaw) {
             if (!Kokkos::isfinite(power_law_slope)) {

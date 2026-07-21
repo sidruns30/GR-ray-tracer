@@ -10,9 +10,9 @@ int main(int argc, char** argv) {
     bool passed = true;
     {
         constexpr int packets_per_cell = 64;
-        Kokkos::View<real*> r("r", 1);
-        Kokkos::View<real*> theta("theta", 1);
-        Kokkos::View<real*> phi("phi", 1);
+        Kokkos::View<real***> r("r", 1, 1, 1);
+        Kokkos::View<real***> theta("theta", 1, 1, 1);
+        Kokkos::View<real***> phi("phi", 1, 1, 1);
         Kokkos::View<real***> density("density", 1, 1, 1);
         Kokkos::View<real***> temperature("temperature", 1, 1, 1);
         Kokkos::View<real****> velocity("velocity", 1, 1, 1, 4);
@@ -37,8 +37,9 @@ int main(int argc, char** argv) {
         generation.energy_per_cell_erg = 8.0;
 
         Photons photons(packets_per_cell);
-        initialize_photons_user(
-            packets_per_cell, 0, 123, r, theta, phi, density, temperature,
+        constexpr std::uint64_t large_id_offset = 50000000000ULL;
+        initialize_photons_disk(
+            packets_per_cell, 0, large_id_offset, r, theta, phi, density, temperature,
             velocity, magnetic, generation, units, photons);
         Kokkos::fence();
 
@@ -48,6 +49,7 @@ int main(int argc, char** argv) {
         auto energies = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, photons.I);
         auto terminated = Kokkos::create_mirror_view_and_copy(
             Kokkos::HostSpace{}, photons.terminate);
+        auto phases = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, photons.phase);
         auto x0 = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, photons.x0);
         auto x1 = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, photons.x1);
         auto x2 = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, photons.x2);
@@ -59,9 +61,11 @@ int main(int argc, char** argv) {
 
         real total_energy = 0.0;
         for (int i = 0; i < packets_per_cell; ++i) {
-            passed = passed && ids(i) == static_cast<std::uint32_t>(123 + i);
+            passed = passed && ids(i) == large_id_offset + static_cast<std::uint64_t>(i);
             passed = passed && frequencies(i) > 0.0 && Kokkos::isfinite(frequencies(i));
             passed = passed && !terminated(i);
+            passed = passed &&
+                phases(i) == static_cast<std::uint8_t>(PhotonPhase::Disk);
             total_energy += energies(i);
             const real state[8] = {
                 x0(i), x1(i), x2(i), x3(i), k0(i), k1(i), k2(i), k3(i)};
@@ -77,7 +81,7 @@ int main(int argc, char** argv) {
         generation.nu_min_hz = 1.0e9;
         generation.nu_max_hz = 1.0e12;
         generation.power_law_slope = 2.5;
-        initialize_photons_user(
+        initialize_photons_disk(
             packets_per_cell, 0, 1000, r, theta, phi, density, temperature,
             velocity, magnetic, generation, units, photons);
         Kokkos::fence();

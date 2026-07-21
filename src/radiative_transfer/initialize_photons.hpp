@@ -1,4 +1,4 @@
-// Photon initialization for the supported camera models.
+// Photon initialization for image-plane and disk-emission simulations.
 
 #pragma once
 
@@ -8,123 +8,47 @@
 #include "../metrics/cartesian_kerr_schild.hpp"
 #include "../metrics/kerr_schild_core.hpp"
 #include "fluid_frame.hpp"
-inline void initialize_photons_pinhole(
+inline void initialize_photons_image(
     const int photons_per_process,
     const real camera_distance,
     const real camera_theta,
     const real camera_phi,
     const int mpi_rank,
     const int mpi_size,
-    const std::uint32_t global_id_offset,
-    const PhotonGenerationConfig& generation,
+    const std::uint64_t global_id_offset,
     Photons &photons)
 {
-    (void)mpi_size;
-    const real cam_x = camera_distance * Kokkos::sin(camera_theta) * Kokkos::cos(camera_phi);
-    const real cam_y = camera_distance * Kokkos::sin(camera_theta) * Kokkos::sin(camera_phi);
-    const real cam_z = camera_distance * Kokkos::cos(camera_theta);
-    // Local captures of runtime-configurable globals: device code can't read
-    // `extern real` globals directly (see kerr_schild_core.hpp), but the
-    // KOKKOS_LAMBDA below captures locals in this scope by value, which works.
-    const real a_BH_ = a_BH;
-    const real M_BH_ = M_BH;
-    const real dlambda_init = dlambda;
-    const real pinhole_aperture_radius_ = pinhole_aperture_radius;
-    const real frequency_hz = generation.camera_frequency_hz;
-    const real packet_energy_erg = generation.camera_packet_energy_erg;
-    Kokkos::Random_XorShift64_Pool<> rand_pool(12345 + mpi_rank);
-    Kokkos::parallel_for(
-        "InitPhotons",
-        Kokkos::RangePolicy<>(0, photons_per_process),
-        KOKKOS_LAMBDA(int i) {
-            photons.id(i) = global_id_offset + static_cast<std::uint32_t>(i);
-            photons.frequency(i) = frequency_hz;
-            auto rand_gen = rand_pool.get_state();
-            const real radius = rand_gen.drand(0.0, pinhole_aperture_radius_);
-            const real azimuth = rand_gen.drand(0, 2.0 * PI);
-            const real screen_u = radius * Kokkos::cos(azimuth);
-            const real screen_v = radius * Kokkos::sin(azimuth);
-            const real kx = -cam_x + screen_u;
-            const real ky = -cam_y + screen_v;
-            const real kz = -cam_z;
-            const real k_norm = Kokkos::sqrt(kx * kx + ky * ky + kz * kz);
-            rand_pool.free_state(rand_gen);
-            photons.x0(i)  = 0.0;
-            photons.x1(i)  = cam_x;
-            photons.x2(i)  = cam_y;
-            photons.x3(i)  = cam_z;
-            // Screen-space impact parameters this photon's direction was sampled
-            // at, in the pinhole aperture plane -- fixed for the photon's lifetime,
-            // used by observation.hpp to bin it onto a stable camera-screen image.
-            photons.theta_disp(i) = screen_u;
-            photons.phi_disp(i) = screen_v;
-            // Build a genuinely null contravariant wavevector at (0,cam_x,cam_y,cam_z)
-            // with this spatial direction, then lower it to the covariant p_mu that
-            // compute_rhs actually propagates (see kerr_schild_core.hpp).
-            const real X[4] = {0.0, cam_x, cam_y, cam_z};
-            const real K_spatial[3] = {kx / k_norm, ky / k_norm, kz / k_norm};
-            real p_cov[4];
-            kerr_schild::null_covariant_momentum_from_spatial_direction(X, K_spatial, a_BH_, M_BH_, p_cov);
-            photons.k0(i)  = p_cov[0];
-            photons.k1(i)  = p_cov[1];
-            photons.k2(i)  = p_cov[2];
-            photons.k3(i)  = p_cov[3];
-            photons.I(i)  = packet_energy_erg;
-            photons.Q(i)  = 0.0;
-            photons.U(i)  = 0.0;
-            photons.V(i)  = 0.0;
-            photons.dlambda(i) = dlambda_init * camera_distance;
-            photons.terminate(i)  = false;
-        }
-    );
-}
-
-inline void initialize_photons_image_camera(
-    const int photons_per_process,
-    const real camera_distance,
-    const real camera_theta,
-    const real camera_phi,
-    const int mpi_rank,
-    const int mpi_size,
-    const std::uint32_t global_id_offset,
-    const PhotonGenerationConfig& generation,
-    Photons &photons)
-{
-    (void)camera_theta;
-    (void)camera_phi;
     (void)mpi_size;
     // Construct a plane perpendicular to the camera direction at distance camera_distance
     // Sample photons uniformly across the plane area
-    const real plane_x_center = camera_distance * Kokkos::sin(plane_theta) * Kokkos::cos(plane_phi);
-    const real plane_y_center = camera_distance * Kokkos::sin(plane_theta) * Kokkos::sin(plane_phi);
-    const real plane_z_center = camera_distance * Kokkos::cos(plane_theta);
+    const real plane_x_center = camera_distance * Kokkos::sin(camera_theta) * Kokkos::cos(camera_phi);
+    const real plane_y_center = camera_distance * Kokkos::sin(camera_theta) * Kokkos::sin(camera_phi);
+    const real plane_z_center = camera_distance * Kokkos::cos(camera_theta);
     // Orthonormal tangent basis at the camera's spherical position.
     const real theta_hat[3] = {
-        Kokkos::cos(plane_theta) * Kokkos::cos(plane_phi),
-        Kokkos::cos(plane_theta) * Kokkos::sin(plane_phi),
-        -Kokkos::sin(plane_theta)
+        Kokkos::cos(camera_theta) * Kokkos::cos(camera_phi),
+        Kokkos::cos(camera_theta) * Kokkos::sin(camera_phi),
+        -Kokkos::sin(camera_theta)
         };
     const real phi_hat[3] = {
-        -Kokkos::sin(plane_phi),
-        Kokkos::cos(plane_phi),
+        -Kokkos::sin(camera_phi),
+        Kokkos::cos(camera_phi),
         0.0
         };
-    // Local captures of runtime-configurable globals -- see the comment in
-    // initialize_photons_pinhole above.
+    // Runtime globals are copied into local values captured by the device kernel.
     const real a_BH_ = a_BH;
     const real M_BH_ = M_BH;
     const real dlambda_init = dlambda;
     const real plane_dim1_ = plane_dim1;
     const real plane_dim2_ = plane_dim2;
-    const real frequency_hz = generation.camera_frequency_hz;
-    const real packet_energy_erg = generation.camera_packet_energy_erg;
     Kokkos::Random_XorShift64_Pool<> rand_pool(12345 + mpi_rank);
     Kokkos::parallel_for(
         "InitPhotonsImageCamera",
         Kokkos::RangePolicy<>(0, photons_per_process),
         KOKKOS_LAMBDA(int i) {
-            photons.id(i) = global_id_offset + static_cast<std::uint32_t>(i);
-            photons.frequency(i) = frequency_hz;
+            photons.id(i) = global_id_offset + static_cast<std::uint64_t>(i);
+            photons.frequency(i) = 0.0;
+            photons.emission_frame_energy(i) = 1.0;
             auto rand_gen = rand_pool.get_state();
             const real screen_u = rand_gen.drand(-plane_dim1_/2, plane_dim1_/2);
             const real screen_v = rand_gen.drand(-plane_dim2_/2, plane_dim2_/2);
@@ -155,12 +79,16 @@ inline void initialize_photons_image_camera(
             photons.k1(i)  = p_cov[1];
             photons.k2(i)  = p_cov[2];
             photons.k3(i)  = p_cov[3];
-            photons.I(i)  = packet_energy_erg;
+            // Backward rays are selectors, not emitted packets. Intensity and
+            // frequency are initialized from the fluid only after the ray
+            // reaches an emitting disk cell.
+            photons.I(i)  = 0.0;
             photons.Q(i)  = 0.0;
             photons.U(i)  = 0.0;
             photons.V(i)  = 0.0;
             photons.dlambda(i) = dlambda_init * camera_distance;
             photons.terminate(i)  = false;
+            photons.phase(i) = static_cast<std::uint8_t>(PhotonPhase::ImageBackward);
             // Screen-space displacement this photon's pixel was sampled at in the
             // image plane -- fixed for the photon's lifetime, used by
             // observation.hpp to bin it onto a stable camera-screen image.
@@ -170,14 +98,14 @@ inline void initialize_photons_image_camera(
     );
 }
 
-// Custom photon initialization
-inline void initialize_photons_user(
+// Emit superphotons from every rank-local disk cell in the fluid frame.
+inline void initialize_photons_disk(
     const int photons_per_process,
     const int mpi_rank,
-    const std::uint32_t global_id_offset,
-    const Kokkos::View<real*>& r,
-    const Kokkos::View<real*>& theta,
-    const Kokkos::View<real*>& phi,
+    const std::uint64_t global_id_offset,
+    const Kokkos::View<real***>& r,
+    const Kokkos::View<real***>& theta,
+    const Kokkos::View<real***>& phi,
     const Kokkos::View<real***>& density,
     const Kokkos::View<real***>& temperature,
     const Kokkos::View<real****>& velocity,
@@ -186,8 +114,8 @@ inline void initialize_photons_user(
     const UnitConversions& units,
     Photons &photons)
 {
-    const std::size_t ntheta_local = theta.extent(0);
-    const std::size_t nphi_local = phi.extent(0);
+    const std::size_t ntheta_local = r.extent(1);
+    const std::size_t nphi_local = r.extent(2);
     const int packets_per_cell = generation.superphotons_per_cell;
     const PhotonGeneratorType generator_type = generation.generator;
     const real energy_per_cell = generation.energy_per_cell_erg;
@@ -217,9 +145,9 @@ inline void initialize_photons_user(
             const std::size_t cell_j = remainder / nphi_local;
             const std::size_t cell_k = remainder % nphi_local;
 
-            const real radius = r(cell_i);
-            const real polar = theta(cell_j);
-            const real azimuth = phi(cell_k);
+            const real radius = r(cell_i, cell_j, cell_k);
+            const real polar = theta(cell_i, cell_j, cell_k);
+            const real azimuth = phi(cell_i, cell_j, cell_k);
             real position[4];
             spherical_kerr_schild_to_cartesian(radius, polar, azimuth, spin, position);
 
@@ -292,8 +220,15 @@ inline void initialize_photons_user(
             }
             rand_pool.free_state(rand_gen);
 
-            photons.id(i) = global_id_offset + static_cast<std::uint32_t>(i);
+            photons.id(i) = global_id_offset + static_cast<std::uint64_t>(i);
             photons.frequency(i) = sampled_frequency;
+            real emitted_frame_energy = 0.0;
+            if (generated) {
+                for (int component = 0; component < 4; ++component) {
+                    emitted_frame_energy -= p_cov[component] * tetrad[0][component];
+                }
+            }
+            photons.emission_frame_energy(i) = emitted_frame_energy;
             photons.x0(i) = position[0];
             photons.x1(i) = position[1];
             photons.x2(i) = position[2];
@@ -308,6 +243,9 @@ inline void initialize_photons_user(
             photons.V(i)  = 0.0;
             photons.dlambda(i) = step_size;
             photons.terminate(i) = !generated;
+            photons.phase(i) = generated
+                ? static_cast<std::uint8_t>(PhotonPhase::Disk)
+                : static_cast<std::uint8_t>(PhotonPhase::Rejected);
             photons.theta_disp(i) = 0.0;
             photons.phi_disp(i) = 0.0;
         }

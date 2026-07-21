@@ -1,5 +1,7 @@
+// Camera products constructed from image-mode packets that reached the plane.
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "../utils.hpp"
@@ -7,126 +9,76 @@
 struct ObservationProducts {
     std::size_t image_nx = 0;
     std::size_t image_ny = 0;
-    std::size_t lightcurve_bins = 0;
     std::size_t spectrum_bins = 0;
+    std::uint64_t arrived_count = 0;
     std::vector<real> image_I;
     std::vector<real> image_Q;
     std::vector<real> image_U;
     std::vector<real> image_V;
-    std::vector<real> lightcurve_I;
     std::vector<real> spectrum_frequency_hz;
     std::vector<real> spectrum_I;
 };
 
-inline constexpr std::size_t default_image_bins = 256;
-inline constexpr std::size_t default_lightcurve_bins = 128;
-inline constexpr std::size_t default_spectrum_bins = 128;
+inline std::size_t observation_bin(real value, real minimum,
+                                   real maximum, std::size_t bins) {
+    if (bins <= 1 || !(maximum > minimum)) return 0;
+    const real fraction = (value - minimum) / (maximum - minimum);
+    const real scaled = Kokkos::fmax(
+        real(0.0), Kokkos::fmin(real(1.0), fraction));
+    return static_cast<std::size_t>(scaled * static_cast<real>(bins - 1));
+}
 
-inline ObservationProducts make_observation_products(std::size_t nx, std::size_t ny,
-                                                     std::size_t nt, std::size_t nnu) {
+inline ObservationProducts build_observation_products(
+    const Photons& photons,
+    std::size_t image_nx,
+    std::size_t image_ny,
+    std::size_t spectrum_bins,
+    real spectrum_min_hz,
+    real spectrum_max_hz,
+    real image_width,
+    real image_height) {
     ObservationProducts products;
-    products.image_nx = nx;
-    products.image_ny = ny;
-    products.lightcurve_bins = nt;
-    products.spectrum_bins = nnu;
-    products.image_I.assign(nx * ny, 0.0);
-    products.image_Q.assign(nx * ny, 0.0);
-    products.image_U.assign(nx * ny, 0.0);
-    products.image_V.assign(nx * ny, 0.0);
-    products.lightcurve_I.assign(nt, 0.0);
-    products.spectrum_frequency_hz.assign(nnu, 0.0);
-    products.spectrum_I.assign(nnu, 0.0);
-    return products;
-}
+    products.image_nx = image_nx;
+    products.image_ny = image_ny;
+    products.spectrum_bins = spectrum_bins;
+    products.image_I.assign(image_nx * image_ny, 0.0);
+    products.image_Q.assign(image_nx * image_ny, 0.0);
+    products.image_U.assign(image_nx * image_ny, 0.0);
+    products.image_V.assign(image_nx * image_ny, 0.0);
+    products.spectrum_frequency_hz.resize(spectrum_bins);
+    products.spectrum_I.assign(spectrum_bins, 0.0);
 
-inline void accumulate_observation(ObservationProducts& products,
-                                   const Photons& photons,
-                                   std::size_t photon_index,
-                                   std::size_t pixel_x,
-                                   std::size_t pixel_y,
-                                   std::size_t time_bin,
-                                   std::size_t spectrum_bin) {
-    if (pixel_x < products.image_nx && pixel_y < products.image_ny) {
-        const std::size_t idx = pixel_y * products.image_nx + pixel_x;
-        products.image_I[idx] += photons.I_host(photon_index);
-        products.image_Q[idx] += photons.Q_host(photon_index);
-        products.image_U[idx] += photons.U_host(photon_index);
-        products.image_V[idx] += photons.V_host(photon_index);
-    }
-    if (time_bin < products.lightcurve_bins) {
-        products.lightcurve_I[time_bin] += photons.I_host(photon_index);
-    }
-    if (spectrum_bin < products.spectrum_bins) {
-        products.spectrum_I[spectrum_bin] += photons.I_host(photon_index);
-    }
-}
-
-inline std::size_t bin_from_value(real value, real min_value, real span, std::size_t bins) {
-    const real scaled = (value - min_value) / span;
-    return static_cast<std::size_t>(Kokkos::fmax(
-        real(0.0), Kokkos::fmin(
-            scaled * static_cast<real>(bins - 1), static_cast<real>(bins - 1))));
-}
-
-// The caller must copy the required photon fields to host before invoking this
-// function. Keeping that transfer at the checkpoint boundary avoids duplicate
-// device-to-host copies when raw photon fields and observations are both saved.
-inline ObservationProducts build_observation_products(const Photons& photons,
-                                                      std::size_t image_bins = default_image_bins,
-                                                      std::size_t lightcurve_bins = default_lightcurve_bins,
-                                                      std::size_t spectrum_bins = default_spectrum_bins) {
-    ObservationProducts products = make_observation_products(image_bins, image_bins, lightcurve_bins, spectrum_bins);
-    const std::size_t n = photons.x0_host.extent(0);
-    if (n == 0) {
-        return products;
-    }
-
-    // Fixed screen-space bounds make pixels comparable across steps and ranks.
-    real screen_half1, screen_half2;
-    if (use_image_camera) {
-        screen_half1 = plane_dim1 / 2.0;
-        screen_half2 = plane_dim2 / 2.0;
-    } else if (use_pinhole_camera) {
-        screen_half1 = pinhole_aperture_radius;
-        screen_half2 = pinhole_aperture_radius;
-    } else {
-        screen_half1 = 1.0;
-        screen_half2 = 1.0;
-    }
-    const real screen_span1 = Kokkos::fmax(real(1e-15), 2.0 * screen_half1);
-    const real screen_span2 = Kokkos::fmax(real(1e-15), 2.0 * screen_half2);
-
-    // These bins use per-rank checkpoint bounds; their indices are not global axes.
-    real t_min = photons.x0_host(0), t_max = photons.x0_host(0);
-    real nu_min = photons.frequency_host(0), nu_max = photons.frequency_host(0);
-    for (std::size_t i = 1; i < n; ++i) {
-        t_min = Kokkos::fmin(t_min, photons.x0_host(i));
-        t_max = Kokkos::fmax(t_max, photons.x0_host(i));
-        nu_min = Kokkos::fmin(nu_min, photons.frequency_host(i));
-        nu_max = Kokkos::fmax(nu_max, photons.frequency_host(i));
-    }
-    const real t_span = Kokkos::fmax(real(1e-15), t_max - t_min);
-    const real log_nu_min = Kokkos::log10(Kokkos::fmax(real(1e-300), nu_min));
-    const real log_nu_max = Kokkos::log10(Kokkos::fmax(real(1e-300), nu_max));
-    const real log_nu_span = Kokkos::fmax(real(1e-15), log_nu_max - log_nu_min);
-
+    const real log_min = Kokkos::log10(spectrum_min_hz);
+    const real log_max = Kokkos::log10(spectrum_max_hz);
     for (std::size_t bin = 0; bin < spectrum_bins; ++bin) {
         const real fraction = spectrum_bins > 1
             ? static_cast<real>(bin) / static_cast<real>(spectrum_bins - 1)
             : 0.0;
         products.spectrum_frequency_hz[bin] =
-            Kokkos::pow(real(10.0), log_nu_min + fraction * log_nu_span);
+            Kokkos::pow(real(10.0), log_min + fraction * (log_max - log_min));
     }
 
-    for (std::size_t i = 0; i < n; ++i) {
-        const std::size_t pixel_x = bin_from_value(photons.theta_disp_host(i), -screen_half1, screen_span1, image_bins);
-        const std::size_t pixel_y = bin_from_value(photons.phi_disp_host(i), -screen_half2, screen_span2, image_bins);
-        const std::size_t time_bin = bin_from_value(photons.x0_host(i), t_min, t_span, lightcurve_bins);
-        const std::size_t spectrum_bin = bin_from_value(
-            Kokkos::log10(Kokkos::fmax(real(1e-300), photons.frequency_host(i))),
-            log_nu_min, log_nu_span, spectrum_bins);
-        accumulate_observation(products, photons, i, pixel_x, pixel_y, time_bin, spectrum_bin);
-    }
+    for (std::size_t i = 0; i < photons.phase_host.extent(0); ++i) {
+        if (static_cast<PhotonPhase>(photons.phase_host(i)) != PhotonPhase::ImageArrived) {
+            continue;
+        }
+        ++products.arrived_count;
+        const std::size_t pixel_x = observation_bin(
+            photons.theta_disp_host(i), -0.5 * image_width, 0.5 * image_width, image_nx);
+        const std::size_t pixel_y = observation_bin(
+            photons.phi_disp_host(i), -0.5 * image_height, 0.5 * image_height, image_ny);
+        const std::size_t pixel = pixel_y * image_nx + pixel_x;
+        products.image_I[pixel] += photons.I_host(i);
+        products.image_Q[pixel] += photons.Q_host(i);
+        products.image_U[pixel] += photons.U_host(i);
+        products.image_V[pixel] += photons.V_host(i);
 
+        const real frequency = photons.frequency_host(i);
+        if (frequency >= spectrum_min_hz && frequency <= spectrum_max_hz) {
+            const std::size_t bin = observation_bin(
+                Kokkos::log10(frequency), log_min, log_max, spectrum_bins);
+            products.spectrum_I[bin] += photons.I_host(i);
+        }
+    }
     return products;
 }

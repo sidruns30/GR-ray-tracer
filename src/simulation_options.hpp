@@ -1,70 +1,46 @@
 #pragma once
 
-#include <optional>
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
-#include "input/load_python_arrays.hpp"
 #include "radiative_transfer/scattering.hpp"
+#include "radiative_transfer/radiative_transfer.hpp"
+
+enum class SimulationMode : std::uint8_t { Image = 0, Disk = 1 };
 
 struct SimulationOptions {
+    SimulationMode mode = SimulationMode::Image;
     std::string numpy_dir = ".";
     std::string output_dir = output_directory;
-    std::string config_path;
-    std::optional<std::string> output_variables;
     bool vacuum = false;
     bool enable_scattering = false;
     real scattering_optical_depth = 0.0;
     real scattering_albedo = 1.0;
+    std::uint64_t scattering_seed = 12345u;
+    bool enable_absorption = false;
+    bool enable_emission = false;
+    real absorption_coefficient = 0.0;
+    real emission_coefficient = 0.0;
     IntegratorType integrator = IntegratorType::RK45;
+    std::size_t image_nx = 256;
+    std::size_t image_ny = 256;
+    std::size_t spectrum_bins = 128;
+    real spectrum_min_hz = 1.0e8;
+    real spectrum_max_hz = 1.0e22;
 };
 
-inline SimulationOptions parse_simulation_options(int argc, char* argv[]) {
-    SimulationOptions options;
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
+inline SimulationMode parse_simulation_mode(const std::string& value) {
+    if (value == "image") return SimulationMode::Image;
+    if (value == "disk") return SimulationMode::Disk;
+    throw std::runtime_error("simulation.mode must be 'image' or 'disk'");
+}
 
-        // Accept both "--flag value" and "--flag=value".
-        std::string flag = arg;
-        std::string inline_value;
-        bool has_inline_value = false;
-        const auto eq = arg.find('=');
-        if (arg.rfind("--", 0) == 0 && eq != std::string::npos) {
-            flag = arg.substr(0, eq);
-            inline_value = arg.substr(eq + 1);
-            has_inline_value = true;
-        }
-
-        const auto next_value = [&](const char* name) -> std::string {
-            if (has_inline_value) return inline_value;
-            if (i + 1 >= argc) {
-                throw std::runtime_error(std::string("Missing value for ") + name);
-            }
-            return argv[++i];
-        };
-
-        if (flag == "--numpy-dir") options.numpy_dir = next_value("--numpy-dir");
-        else if (flag == "--output-dir") options.output_dir = next_value("--output-dir");
-        else if (flag == "--output-variables") options.output_variables = next_value("--output-variables");
-        else if (flag == "--config") options.config_path = next_value("--config");
-        else if (flag == "--vacuum") options.vacuum = true;
-        else if (flag == "--scatter-optical-depth") options.scattering_optical_depth = std::stod(next_value("--scatter-optical-depth"));
-        else if (flag == "--scatter-albedo") options.scattering_albedo = std::stod(next_value("--scatter-albedo"));
-        else if (flag == "--scatter") options.enable_scattering = true;
-        else if (flag == "--integrator") {
-            const auto mode = next_value("--integrator");
-            if (mode == "rk4") {
-                options.integrator = IntegratorType::RK4;
-            } else if (mode == "rk45") {
-                options.integrator = IntegratorType::RK45;
-            } else {
-                throw std::runtime_error("Unknown integrator: " + mode);
-            }
-        }
-        else {
-            throw std::runtime_error("Unknown command-line argument: " + arg +
-                                      " (see README.md for supported flags)");
-        }
+inline std::string parse_config_path(int argc, char* argv[]) {
+    const std::string path = argc == 2 ? argv[1] : "";
+    if (path.empty() || path.front() == '-') {
+        throw std::runtime_error("Usage: gr-ray-trace <config.toml>");
     }
-    return options;
+    return path;
 }

@@ -1,12 +1,13 @@
+// Atomic checkpoint and final image-product output.
 #pragma once
 
 #include <cstdint>
 #include <filesystem>
-#include <optional>
 #include <system_error>
 #include <vector>
 
 #include "../radiative_transfer/observation.hpp"
+#include "../simulation_options.hpp"
 #include "../utils.hpp"
 
 template <typename HostView>
@@ -35,6 +36,7 @@ inline void add_photon_array(cnpy::NpzWriter& archive,
     };
     if (name == "id") add_strided(photons.id_host);
     else if (name == "frequency") add_strided(photons.frequency_host);
+    else if (name == "emission_frame_energy") add_strided(photons.emission_frame_energy_host);
     else if (name == "x0") add_strided(photons.x0_host);
     else if (name == "x1") add_strided(photons.x1_host);
     else if (name == "x2") add_strided(photons.x2_host);
@@ -48,6 +50,7 @@ inline void add_photon_array(cnpy::NpzWriter& archive,
     else if (name == "U") add_strided(photons.U_host);
     else if (name == "V") add_strided(photons.V_host);
     else if (name == "dlambda") add_strided(photons.dlambda_host);
+    else if (name == "phase") add_strided(photons.phase_host);
     else if (name == "theta_disp") add_strided(photons.theta_disp_host);
     else if (name == "phi_disp") add_strided(photons.phi_disp_host);
     else if (name == "terminate") {
@@ -60,68 +63,80 @@ inline void add_photon_array(cnpy::NpzWriter& archive,
     }
 }
 
-inline void add_observation_array(cnpy::NpzWriter& archive,
-                                  const ObservationProducts& products,
-                                  const std::string& name) {
-    if (name == "image_I") {
-        archive.add(name, products.image_I.data(), {products.image_ny, products.image_nx});
-    } else if (name == "image_Q") {
-        archive.add(name, products.image_Q.data(), {products.image_ny, products.image_nx});
-    } else if (name == "image_U") {
-        archive.add(name, products.image_U.data(), {products.image_ny, products.image_nx});
-    } else if (name == "image_V") {
-        archive.add(name, products.image_V.data(), {products.image_ny, products.image_nx});
-    } else if (name == "lightcurve_I") {
-        archive.add(name, products.lightcurve_I.data(), {products.lightcurve_bins});
-    } else if (name == "spectrum_frequency_hz") {
-        archive.add(name, products.spectrum_frequency_hz.data(), {products.spectrum_bins});
-    } else if (name == "spectrum_I") {
-        archive.add(name, products.spectrum_I.data(), {products.spectrum_bins});
-    }
-}
-
-// Each checkpoint is published atomically so live readers never observe a
-// partially written archive.
-inline void write_output_step(Photons& photons,
-                              std::size_t step,
-                              int rank,
-                              const OutputSelection& selection) {
+inline void publish_archive(const std::filesystem::path& final_path,
+                            const auto& write_contents) {
     namespace fs = std::filesystem;
-    const fs::path directory(output_directory);
-    fs::create_directories(directory);
-
-    photons.copy_to_host(selection);
-    std::optional<ObservationProducts> observations;
-    if (selection.needs_observation_products()) {
-        observations = build_observation_products(photons);
-    }
-
-    const std::string filename =
-        "output_step_" + std::to_string(step) + "_rank" + std::to_string(rank) + ".npz";
-    const fs::path final_path = directory / filename;
+    fs::create_directories(final_path.parent_path());
     const fs::path temporary_path = final_path.string() + ".tmp";
-
     try {
         cnpy::NpzWriter archive(temporary_path.string());
-        const std::size_t photon_count = photons.x0.extent(0);
-        for (const std::string& name : selection.names()) {
-            if (name.rfind("image_", 0) == 0 || name == "lightcurve_I" ||
-                name == "spectrum_frequency_hz" || name == "spectrum_I") {
-                add_observation_array(archive, *observations, name);
-            } else {
-                add_photon_array(archive, photons, name, photon_count, output_stride);
-            }
-        }
+        write_contents(archive);
         archive.close();
     } catch (...) {
         fs::remove(temporary_path);
         throw;
     }
-
     std::error_code error;
     fs::rename(temporary_path, final_path, error);
     if (error) {
         fs::remove(temporary_path);
-        throw std::runtime_error("Failed to publish output archive " + final_path.string() + ": " + error.message());
+        throw std::runtime_error(
+            "Failed to publish output archive " + final_path.string() + ": " + error.message());
     }
+}
+
+// One atomic archive per output step and rank. Since ownership can change,
+// consumers must join rank files by the globally unique photon ID.
+inline void write_output_step(Photons& photons,
+                              std::size_t step,
+                              int rank,
+                              const OutputSelection& selection) {
+    photons.copy_to_host(selection);
+    const std::filesystem::path path = std::filesystem::path(output_directory) /
+        ("output_step_" + std::to_string(step) + "_rank" + std::to_string(rank) + ".npz");
+    publish_archive(path, [&](cnpy::NpzWriter& archive) {
+        const std::size_t photon_count = photons.x0.extent(0);
+        for (const std::string& name : selection.names()) {
+            add_photon_array(archive, photons, name, photon_count, output_stride);
+        }
+    });
+}
+
+// Image products use fixed global axes. Arrays are summed across ranks and
+// written once by rank zero, so no post-processing guesswork is required.
+inline void write_image_products(Photons& photons, int rank,
+                                 const SimulationOptions& options) {
+    photons.copy_observation_to_host();
+    ObservationProducts local = build_observation_products(
+        photons, options.image_nx, options.image_ny, options.spectrum_bins,
+        options.spectrum_min_hz, options.spectrum_max_hz, plane_dim1, plane_dim2);
+    ObservationProducts global = local;
+    const int image_count = static_cast<int>(local.image_I.size());
+    const int spectrum_count = static_cast<int>(local.spectrum_I.size());
+    MPI_Reduce(local.image_I.data(), global.image_I.data(), image_count,
+               MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(local.image_Q.data(), global.image_Q.data(), image_count,
+               MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(local.image_U.data(), global.image_U.data(), image_count,
+               MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(local.image_V.data(), global.image_V.data(), image_count,
+               MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(local.spectrum_I.data(), global.spectrum_I.data(), spectrum_count,
+               MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&local.arrived_count, &global.arrived_count, 1,
+               MPI_UINT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
+    if (rank != 0) return;
+
+    const std::filesystem::path path =
+        std::filesystem::path(output_directory) / "image_products.npz";
+    publish_archive(path, [&](cnpy::NpzWriter& archive) {
+        archive.add("image_I", global.image_I.data(), {global.image_ny, global.image_nx});
+        archive.add("image_Q", global.image_Q.data(), {global.image_ny, global.image_nx});
+        archive.add("image_U", global.image_U.data(), {global.image_ny, global.image_nx});
+        archive.add("image_V", global.image_V.data(), {global.image_ny, global.image_nx});
+        archive.add("spectrum_frequency_hz", global.spectrum_frequency_hz.data(),
+                    {global.spectrum_bins});
+        archive.add("spectrum_I", global.spectrum_I.data(), {global.spectrum_bins});
+        archive.add("arrived_count", &global.arrived_count, {std::size_t(1)});
+    });
 }

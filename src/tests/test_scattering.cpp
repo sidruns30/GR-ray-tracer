@@ -8,9 +8,9 @@ int main(int argc, char** argv) {
     Kokkos::initialize(argc, argv);
     bool passed = true;
     {
-        Kokkos::View<real*> r("r", 1);
-        Kokkos::View<real*> theta("theta", 1);
-        Kokkos::View<real*> phi("phi", 1);
+        Kokkos::View<real***> r("r", 1, 1, 1);
+        Kokkos::View<real***> theta("theta", 1, 1, 1);
+        Kokkos::View<real***> phi("phi", 1, 1, 1);
         Kokkos::View<real***> density("density", 1, 1, 1);
         Kokkos::View<real***> temperature("temperature", 1, 1, 1);
         Kokkos::View<real****> velocity("velocity", 1, 1, 1, 4);
@@ -28,7 +28,6 @@ int main(int argc, char** argv) {
 
         ScatteringFluidGrid grid{
             r, theta, phi, density, temperature, velocity, magnetic,
-            0.1, 0.1, 0.1,
             1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
             a_BH, M_BH, true};
         ScatteringModel model{true, 1.0e6, 0.5, 42};

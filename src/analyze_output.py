@@ -6,30 +6,15 @@ alongside the C++ binary while it is still writing output.
 
 Each rank writes one `output_step_<step>_rank<rank>.npz` archive per checkpoint.
 The archive contains the fields selected by `output.variables` in the TOML
-configuration or `--output-variables` on the simulation command line.
+configuration's `output.variables` setting.
 
-When `id` is present, concatenated rank output is sorted by globally unique
-packet ID so trajectories remain aligned across steps. Without `id`, the
-fallback identity is (rank, local index), which is stable because terminated
-packets are not removed.
+Because packets migrate between MPI domains, rank-local ordering is not stable.
+When `id` is present this script sorts the joined rank output by the globally
+unique packet ID before comparing checkpoints.
 
-image_I/Q/U/V (see build_observation_products() in
-src/radiative_transfer/observation.hpp) bin each photon by its FIXED
-camera-screen launch coordinate (theta_disp/phi_disp, set once at init time in
-src/radiative_transfer/initialize_photons.hpp) over a range set by the active
-camera's screen geometry (image-plane camera: +-plane_dim1/2 x +-plane_dim2/2;
-pinhole camera: +-pinhole_aperture_radius square) -- NOT the photon's current,
-time-varying x/y position, and NOT a per-call min/max. So pixel (i, j) means
-the same camera-screen location in every output checkpoint, each dump is
-one "photograph" of where photons-per-screen-pixel currently are, and (since
-the range depends only on config, not on the data) image products ARE
-directly comparable/summable across MPI ranks and across steps.
-
-Caveat that still applies: lightcurve_I (binned by coordinate time x0) and
-spectrum_I (log-binned by frequency in Hz) are each rescaled to *that call's
-own* local min/max, per rank, per dump -- so those two products
-are NOT directly comparable across ranks or across steps, and this script
-plots them per-rank rather than pretending otherwise.
+Image mode additionally writes one globally reduced `image_products.npz` at
+the end of the run. It contains Stokes images and a spectrum using fixed axes.
+Disk mode intentionally produces no camera products.
 
 Usage:
     python3 analyze_output.py post   --output-dir ./output/
@@ -49,22 +34,14 @@ import numpy as np
 DEFAULT_M_BH = 1.0
 DEFAULT_A_BH = 1.0
 
-# Camera screen geometry -- must match src/utils.hpp / config TOML (camera.*).
-# Used only to label/extent the image_I/Q/U/V axes; wrong values mislabel the
-# image but don't affect which pixel a photon lands in (that's fixed in the
-# C++ side, see observation.hpp). Override with --plane-dim1/--plane-dim2 for
-# the image-plane camera, or --pinhole-aperture-radius for the pinhole camera.
+# Camera screen geometry used only to label the final image axes.
 DEFAULT_PLANE_DIM1 = 20.0
 DEFAULT_PLANE_DIM2 = 20.0
-DEFAULT_PINHOLE_APERTURE_RADIUS = 50.0
 
 PHOTON_FIELDS = [
-    "id", "frequency", "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3",
-    "I", "Q", "U", "V", "dlambda", "terminate", "theta_disp", "phi_disp",
-]
-OBS_FIELDS = [
-    "image_I", "image_Q", "image_U", "image_V", "lightcurve_I",
-    "spectrum_frequency_hz", "spectrum_I",
+    "id", "frequency", "emission_frame_energy",
+    "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3",
+    "I", "Q", "U", "V", "dlambda", "terminate", "phase", "theta_disp", "phi_disp",
 ]
 OUTPUT_RE = re.compile(r"output_step_(\d+)_rank(\d+)\.npz$")
 
@@ -103,15 +80,6 @@ def load_photon_step(output_dir: Path, step: int, ranks):
         order = np.argsort(combined["id"], kind="stable")
         combined = {field: values[order] for field, values in combined.items()}
     return combined
-
-
-def load_observation_step(output_dir: Path, step: int, ranks):
-    """Load observation arrays without combining rank-local histogram axes."""
-    out = {}
-    for rank in sorted(ranks):
-        with np.load(archive_path(output_dir, step, rank)) as archive:
-            out[rank] = {name: archive[name] for name in archive.files if name in OBS_FIELDS}
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -277,15 +245,23 @@ def cmd_post(args):
     fig.savefig(plots_dir / "conserved_quantities.png", dpi=150)
     plt.close(fig)
 
-    # --- Trajectories (subset of photons, consistent global index across steps) ---
-    n_photons = all_state[steps_sorted[0]]["x1"].size
+    # --- Trajectories (join by ID because MPI ownership and local order change) ---
+    if not all("id" in all_state[step] for step in steps_sorted):
+        sys.exit("Trajectory analysis with MPI photon migration requires output variable id")
+    common_ids = all_state[steps_sorted[0]]["id"]
+    for step in steps_sorted[1:]:
+        common_ids = np.intersect1d(common_ids, all_state[step]["id"], assume_unique=True)
+    if common_ids.size == 0:
+        sys.exit("No photon IDs are present in every checkpoint; reduce output.stride")
     rng = np.random.default_rng(42)
-    subset = rng.choice(n_photons, size=min(args.max_trajectories, n_photons), replace=False)
+    selected_ids = rng.choice(
+        common_ids, size=min(args.max_trajectories, common_ids.size), replace=False)
 
     def trajectory_plot(coord_a, coord_b, label_a, label_b, filename):
         fig, ax = plt.subplots(figsize=(7, 7))
-        traj_a = np.array([all_state[s][coord_a][subset] for s in steps_sorted])
-        traj_b = np.array([all_state[s][coord_b][subset] for s in steps_sorted])
+        indices = [np.searchsorted(all_state[s]["id"], selected_ids) for s in steps_sorted]
+        traj_a = np.array([all_state[s][coord_a][idx] for s, idx in zip(steps_sorted, indices)])
+        traj_b = np.array([all_state[s][coord_b][idx] for s, idx in zip(steps_sorted, indices)])
         ax.plot(traj_a, traj_b, color="steelblue", alpha=0.5, linewidth=0.8)
         ax.scatter(traj_a[-1], traj_b[-1], color="crimson", s=8, zorder=3, label="final position")
         theta_circ = np.linspace(0, 2 * np.pi, 200)
@@ -295,7 +271,7 @@ def cmd_post(args):
         ax.set_ylabel(label_b)
         ax.set_aspect("equal")
         ax.legend()
-        ax.set_title(f"{len(subset)} photon trajectories")
+        ax.set_title(f"{len(selected_ids)} photon trajectories")
         fig.tight_layout()
         fig.savefig(plots_dir / filename, dpi=150)
         plt.close(fig)
@@ -316,68 +292,42 @@ def cmd_post(args):
     fig.savefig(plots_dir / "radius_histogram.png", dpi=150)
     plt.close(fig)
 
-    # --- Observation images: one camera-screen picture per dump ---
-    # image_I/Q/U/V now bin by each photon's fixed screen coordinate over a
-    # range set purely by camera config (see module docstring), so unlike
-    # lightcurve/spectrum they're safe to sum across ranks into one image.
-    obs_steps = photon_steps
-    first_obs_step = min(obs_steps)
-    first_obs_ranks = sorted(obs_steps[first_obs_step])
-    first_products = load_observation_step(output_dir, first_obs_step, first_obs_ranks)
-    common_obs_fields = set.intersection(*(set(first_products[rank]) for rank in first_obs_ranks))
-    image_fields = [field for field in ("image_I", "image_Q", "image_U", "image_V")
-                    if field in common_obs_fields]
-    if image_fields:
-        half1, half2 = (args.plane_dim1 / 2.0, args.plane_dim2 / 2.0) if not args.pinhole \
-            else (args.pinhole_aperture_radius, args.pinhole_aperture_radius)
-        extent = [-half1, half1, -half2, half2]
-
-        images_dir = plots_dir / "observation_images"
-        images_dir.mkdir(parents=True, exist_ok=True)
-        for step in sorted(obs_steps):
-            ranks = sorted(obs_steps[step])
-            products = load_observation_step(output_dir, step, ranks)
-
-            fig, axes = plt.subplots(1, len(image_fields), figsize=(3.5 * len(image_fields), 3.5), squeeze=False)
+    # Image-mode products are already reduced over MPI by the executable.
+    product_path = output_dir / "image_products.npz"
+    if product_path.exists():
+        with np.load(product_path) as products:
+            image_fields = [name for name in ("image_I", "image_Q", "image_U", "image_V")
+                            if name in products]
+            extent = [-args.camera_width / 2, args.camera_width / 2,
+                      -args.camera_height / 2, args.camera_height / 2]
+            fig, axes = plt.subplots(
+                1, len(image_fields), figsize=(3.7 * len(image_fields), 3.7), squeeze=False)
             for col, field in enumerate(image_fields):
-                combined = np.zeros_like(products[ranks[0]][field])
-                for rank in ranks:
-                    combined += products[rank][field]
-                im = axes[0, col].imshow(combined, origin="lower", cmap="inferno", extent=extent)
+                im = axes[0, col].imshow(
+                    products[field], origin="lower", cmap="inferno", extent=extent)
                 axes[0, col].set_title(field)
-                axes[0, col].set_xlabel("screen u")
-                axes[0, col].set_ylabel("screen v")
+                axes[0, col].set_xlabel("camera u")
+                axes[0, col].set_ylabel("camera v")
                 fig.colorbar(im, ax=axes[0, col], fraction=0.046)
-            fig.suptitle(f"Observation image at step {step} (summed over {len(ranks)} rank(s))")
+            arrived = int(products["arrived_count"][0]) if "arrived_count" in products else 0
+            fig.suptitle(f"Packets arriving at the camera: {arrived}")
             fig.tight_layout()
-            fig.savefig(images_dir / f"observation_image_step_{step:06d}.png", dpi=150)
+            fig.savefig(plots_dir / "image.png", dpi=150)
             plt.close(fig)
-        print(f"Wrote {len(obs_steps)} per-dump observation image(s) to {images_dir}")
 
+            if "spectrum_frequency_hz" in products and "spectrum_I" in products:
+                fig, ax = plt.subplots(figsize=(7, 5))
+                ax.plot(products["spectrum_frequency_hz"], products["spectrum_I"])
+                ax.set_xscale("log")
+                ax.set_xlabel("frequency (Hz)")
+                ax.set_ylabel("Stokes I")
+                ax.set_title("Camera spectrum")
+                ax.grid(alpha=0.3)
+                fig.tight_layout()
+                fig.savefig(plots_dir / "spectrum.png", dpi=150)
+                plt.close(fig)
     else:
-        print("No image arrays were selected -- skipping observation image plots.")
-
-    series_fields = [field for field in ("lightcurve_I", "spectrum_I") if field in common_obs_fields]
-    if series_fields:
-        last_obs_step = max(obs_steps)
-        ranks = sorted(obs_steps[last_obs_step])
-        products = load_observation_step(output_dir, last_obs_step, ranks)
-        fig, axes = plt.subplots(1, len(series_fields), figsize=(6 * len(series_fields), 4), squeeze=False)
-        for col, field in enumerate(series_fields):
-            for rank in ranks:
-                x_values = np.arange(products[rank][field].size)
-                if field == "spectrum_I" and "spectrum_frequency_hz" in products[rank]:
-                    x_values = products[rank]["spectrum_frequency_hz"]
-                    axes[0, col].set_xscale("log")
-                    axes[0, col].set_xlabel("frequency (Hz)")
-                axes[0, col].plot(x_values, products[rank][field], label=f"rank {rank}")
-            axes[0, col].set_title(f"{field} (per-rank local bins)")
-            if field != "spectrum_I" or "spectrum_frequency_hz" not in products[ranks[0]]:
-                axes[0, col].set_xlabel("bin")
-            axes[0, col].legend()
-        fig.tight_layout()
-        fig.savefig(plots_dir / "lightcurve_spectrum.png", dpi=150)
-        plt.close(fig)
+        print("No image_products.npz found; treating this as disk mode.")
 
     print(f"\nPlots written to {plots_dir}")
 
@@ -470,15 +420,10 @@ def main():
     p_post.add_argument("--mass", type=float, default=DEFAULT_M_BH)
     p_post.add_argument("--spin", type=float, default=DEFAULT_A_BH)
     p_post.add_argument("--max-trajectories", type=int, default=40)
-    p_post.add_argument("--pinhole", action="store_true",
-                         help="Set if the run used the pinhole camera (camera.use_pinhole=true) "
-                              "instead of the default image-plane camera, for correct image screen extent")
-    p_post.add_argument("--plane-dim1", type=float, default=DEFAULT_PLANE_DIM1,
-                         help="Image-plane camera width (config camera.plane_dim1); ignored with --pinhole")
-    p_post.add_argument("--plane-dim2", type=float, default=DEFAULT_PLANE_DIM2,
-                         help="Image-plane camera height (config camera.plane_dim2); ignored with --pinhole")
-    p_post.add_argument("--pinhole-aperture-radius", type=float, default=DEFAULT_PINHOLE_APERTURE_RADIUS,
-                         help="Pinhole camera screen radius (src/utils.hpp pinhole_aperture_radius); only used with --pinhole")
+    p_post.add_argument("--camera-width", type=float, default=DEFAULT_PLANE_DIM1,
+                         help="Image-plane width (config camera.width)")
+    p_post.add_argument("--camera-height", type=float, default=DEFAULT_PLANE_DIM2,
+                         help="Image-plane height (config camera.height)")
     p_post.set_defaults(func=cmd_post)
 
     p_watch = sub.add_parser("watch", help="Live terminal monitor while the simulation runs")

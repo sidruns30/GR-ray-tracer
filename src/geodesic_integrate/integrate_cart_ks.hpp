@@ -5,7 +5,10 @@
 #include "../output/display.hpp"
 #include "../metrics/kerr_schild_core.hpp"
 #include "../radiative_transfer/scattering.hpp"
+#include "../radiative_transfer/radiative_transfer.hpp"
 #include "../input/load_python_arrays.hpp"
+#include "../mpi/photon_exchange.hpp"
+#include "../simulation_options.hpp"
 
 struct Geodesic_cartesian_kerr_schild {
     Kokkos::View<real*> photon_x0;
@@ -17,12 +20,16 @@ struct Geodesic_cartesian_kerr_schild {
     Kokkos::View<real*> photon_k2;
     Kokkos::View<real*> photon_k3;
     Kokkos::View<real*> photon_frequency;
+    Kokkos::View<real*> photon_emission_frame_energy;
     Kokkos::View<real*> photon_I;
     Kokkos::View<real*> photon_Q;
     Kokkos::View<real*> photon_U;
     Kokkos::View<real*> photon_V;
     Kokkos::View<real*> photon_dlambda;
     Kokkos::View<bool*> photon_terminate;
+    Kokkos::View<std::uint8_t*> photon_phase;
+    Kokkos::View<real*> photon_theta_disp;
+    Kokkos::View<real*> photon_phi_disp;
 
     const real r_term_min;
     const real r_term_max;
@@ -42,7 +49,15 @@ struct Geodesic_cartesian_kerr_schild {
     const ScatteringModel scattering_model;
     const ScatteringFluidGrid scattering_fluid;
     ScatteringRandomPool scattering_random_pool;
+    const RadiativeTransferModel radiative_transfer_model;
     const IntegratorType integrator;
+    const SimulationMode simulation_mode;
+    const PhotonGenerationConfig photon_generation;
+    const real camera_distance;
+    const real camera_theta;
+    const real camera_phi;
+    const real camera_width;
+    const real camera_height;
 
     Geodesic_cartesian_kerr_schild(
       Photons &photon_,
@@ -52,18 +67,66 @@ struct Geodesic_cartesian_kerr_schild {
       const ScatteringModel& scattering_model_ = ScatteringModel{},
       const ScatteringFluidGrid& scattering_fluid_ = ScatteringFluidGrid{},
       const ScatteringRandomPool& scattering_random_pool_ = ScatteringRandomPool(1),
-      IntegratorType integrator_ = IntegratorType::RK45)
+      const RadiativeTransferModel& radiative_transfer_model_ = RadiativeTransferModel{},
+      IntegratorType integrator_ = IntegratorType::RK45,
+      SimulationMode simulation_mode_ = SimulationMode::Disk,
+      const PhotonGenerationConfig& photon_generation_ = PhotonGenerationConfig{},
+      real camera_distance_ = 1.0, real camera_theta_ = 0.0, real camera_phi_ = 0.0,
+      real camera_width_ = 1.0, real camera_height_ = 1.0)
       : photon_x0(photon_.x0), photon_x1(photon_.x1), photon_x2(photon_.x2), photon_x3(photon_.x3),
        photon_k0(photon_.k0), photon_k1(photon_.k1), photon_k2(photon_.k2), photon_k3(photon_.k3),
        photon_frequency(photon_.frequency),
+       photon_emission_frame_energy(photon_.emission_frame_energy),
        photon_I(photon_.I), photon_Q(photon_.Q), photon_U(photon_.U), photon_V(photon_.V),
        photon_dlambda(photon_.dlambda), photon_terminate(photon_.terminate),
+       photon_phase(photon_.phase), photon_theta_disp(photon_.theta_disp),
+       photon_phi_disp(photon_.phi_disp),
        r_term_min(r_term_min_), r_term_max(r_term_max_),
        a_BH(a_BH_), M_BH(M_BH_),
        atol(atol_), rtol(rtol_), min_step_scale(min_step_scale_), max_step_scale(max_step_scale_),
        safety_factor(safety_factor_),
        scattering_model(scattering_model_), scattering_fluid(scattering_fluid_),
-       scattering_random_pool(scattering_random_pool_), integrator(integrator_) {};
+       scattering_random_pool(scattering_random_pool_),
+       radiative_transfer_model(radiative_transfer_model_), integrator(integrator_),
+       simulation_mode(simulation_mode_), photon_generation(photon_generation_),
+       camera_distance(camera_distance_), camera_theta(camera_theta_), camera_phi(camera_phi_),
+       camera_width(camera_width_), camera_height(camera_height_) {};
+
+    KOKKOS_FUNCTION
+    int camera_plane_crossing(const real state[8], real& screen_u, real& screen_v) const {
+        const real normal[3] = {
+            Kokkos::sin(camera_theta) * Kokkos::cos(camera_phi),
+            Kokkos::sin(camera_theta) * Kokkos::sin(camera_phi),
+            Kokkos::cos(camera_theta)};
+        const real theta_hat[3] = {
+            Kokkos::cos(camera_theta) * Kokkos::cos(camera_phi),
+            Kokkos::cos(camera_theta) * Kokkos::sin(camera_phi),
+            -Kokkos::sin(camera_theta)};
+        const real phi_hat[3] = {
+            -Kokkos::sin(camera_phi), Kokkos::cos(camera_phi), 0.0};
+        const real plane_coordinate =
+            state[IX] * normal[0] + state[IY] * normal[1] + state[IZ] * normal[2];
+        if (plane_coordinate < camera_distance) return 0;
+        const real relative[3] = {
+            state[IX] - camera_distance * normal[0],
+            state[IY] - camera_distance * normal[1],
+            state[IZ] - camera_distance * normal[2]};
+        screen_u = relative[0] * theta_hat[0] + relative[1] * theta_hat[1] + relative[2] * theta_hat[2];
+        screen_v = relative[0] * phi_hat[0] + relative[1] * phi_hat[1] + relative[2] * phi_hat[2];
+        const bool inside = Kokkos::abs(screen_u) <= 0.5 * camera_width &&
+                            Kokkos::abs(screen_v) <= 0.5 * camera_height;
+        return inside ? 1 : -1;
+    }
+
+    KOKKOS_FUNCTION
+    real camera_observer_energy(const real state[8]) const {
+        const real position[4] = {state[IT], state[IX], state[IY], state[IZ]};
+        real metric[4][4];
+        kerr_schild::compute_metric(position, a_BH, M_BH, metric);
+        if (!(metric[0][0] < 0.0)) return 0.0;
+        const real observer_u0 = 1.0 / Kokkos::sqrt(-metric[0][0]);
+        return -state[IKT] * observer_u0;
+    }
 
     KOKKOS_FUNCTION
     void compute_rhs(const real state[8], real dstates[8]) const {
@@ -179,6 +242,7 @@ struct Geodesic_cartesian_kerr_schild {
             photon_k2(idx),
             photon_k3(idx)
         };
+        const PhotonPhase phase = static_cast<PhotonPhase>(photon_phase(idx));
         // Compute distance traveled for adaptive step sizing if needed
         real photon_distance = kerr_schild::compute_r(state[IX], state[IY], state[IZ], a_BH);
         if (photon_distance <= r_term_min) {
@@ -188,15 +252,22 @@ struct Geodesic_cartesian_kerr_schild {
             photon_U(idx) = 0.0;
             photon_V(idx) = 0.0;
             photon_terminate(idx) = true;
+            photon_phase(idx) = static_cast<std::uint8_t>(PhotonPhase::Rejected);
             return;
         }
         if (photon_distance > r_term_max) {
             photon_terminate(idx) = true;
+            photon_phase(idx) = static_cast<std::uint8_t>(PhotonPhase::Rejected);
             return;
         }
         
+        // The affine-parameter length of the step actually taken (as opposed
+        // to the next step size RK45 proposes), used below to accumulate
+        // radiative transfer over the distance just traveled.
+        real step_dlambda_taken = 0.0;
         if (integrator == IntegratorType::RK4) {
-            rk4_step(state, photon_dlambda(idx));
+            step_dlambda_taken = photon_dlambda(idx);
+            rk4_step(state, step_dlambda_taken);
         }
         else if (integrator == IntegratorType::RK45) {
             real k1[8];
@@ -211,6 +282,10 @@ struct Geodesic_cartesian_kerr_schild {
             constexpr int max_rk45_attempts = 12;
 
             for (int attempt = 0; attempt < max_rk45_attempts; ++attempt) {
+                // rk45_step overwrites dlambda_local with its next-step
+                // proposal regardless of accept/reject, so the size of the
+                // step it is about to attempt must be saved first.
+                step_dlambda_taken = dlambda_local;
                 step_accepted = rk45_step(state, &dlambda_local, k1);
                 if (step_accepted) break;
             }
@@ -235,15 +310,91 @@ struct Geodesic_cartesian_kerr_schild {
             photon_U(idx),
             photon_V(idx)
         };
-        if (scattering_model.enabled) {
-            FluidCellCGS fluid;
-            real tetrad[4][4];
-            if (sample_scattering_fluid(state, scattering_fluid, fluid, tetrad)) {
+        FluidCellCGS fluid;
+        real tetrad[4][4];
+        const bool needs_fluid = scattering_model.enabled ||
+            radiative_transfer_model.absorption_enabled ||
+            radiative_transfer_model.emission_enabled ||
+            (simulation_mode == SimulationMode::Image && phase == PhotonPhase::ImageBackward);
+        const bool sampled_fluid = needs_fluid &&
+            sample_scattering_fluid(state, scattering_fluid, fluid, tetrad);
+
+        if (simulation_mode == SimulationMode::Image &&
+            phase == PhotonPhase::ImageBackward && sampled_fluid) {
+            auto random = scattering_random_pool.get_state();
+            real emitted_frequency = 0.0;
+            real emitted_energy = 0.0;
+            bool generated = false;
+            if (photon_generation.generator == PhotonGeneratorType::Blackbody) {
+                generated = GenerateBlackbody(
+                    fluid, random, photon_generation.superphotons_per_cell,
+                    photon_generation.energy_per_cell_erg, emitted_frequency, emitted_energy);
+            } else if (photon_generation.generator == PhotonGeneratorType::PowerLaw) {
+                generated = GeneratePowerLaw(
+                    fluid, random, photon_generation.superphotons_per_cell,
+                    photon_generation.power_law_slope, photon_generation.nu_min_hz,
+                    photon_generation.nu_max_hz, photon_generation.energy_per_cell_erg,
+                    emitted_frequency, emitted_energy);
+            } else {
+                generated = GeneratePhotonsCustom(
+                    fluid, random, photon_generation.superphotons_per_cell,
+                    photon_generation.custom_frequency_hz,
+                    photon_generation.energy_per_cell_erg, emitted_frequency, emitted_energy);
+            }
+            scattering_random_pool.free_state(random);
+            if (generated) {
+                photon_frequency(idx) = emitted_frequency;
+                real emitted_frame_energy = 0.0;
+                for (int component = 0; component < 4; ++component) {
+                    emitted_frame_energy -= state[IKT + component] * tetrad[0][component];
+                }
+                photon_emission_frame_energy(idx) = emitted_frame_energy;
+                stokes[0] = emitted_energy;
+                stokes[1] = stokes[2] = stokes[3] = 0.0;
+                photon_dlambda(idx) = -Kokkos::abs(photon_dlambda(idx));
+                photon_phase(idx) = static_cast<std::uint8_t>(PhotonPhase::ImageForward);
+            } else {
+                stokes[0] = stokes[1] = stokes[2] = stokes[3] = 0.0;
+                photon_terminate(idx) = true;
+                photon_phase(idx) = static_cast<std::uint8_t>(PhotonPhase::Rejected);
+            }
+        } else if (sampled_fluid && phase != PhotonPhase::ImageBackward) {
+            if (radiative_transfer_model.absorption_enabled ||
+                radiative_transfer_model.emission_enabled) {
+                apply_radiative_transfer_step(
+                    stokes, fluid, photon_frequency(idx), step_dlambda_taken,
+                    radiative_transfer_model);
+            }
+            if (scattering_model.enabled) {
                 auto random = scattering_random_pool.get_state();
                 maybe_scatter_photon(
                     state, stokes, photon_frequency(idx), scattering_model,
                     fluid, tetrad, a_BH, M_BH, random);
                 scattering_random_pool.free_state(random);
+            }
+        }
+
+        if (simulation_mode == SimulationMode::Image && phase == PhotonPhase::ImageForward) {
+            real arrival_u = 0.0;
+            real arrival_v = 0.0;
+            const int crossing = camera_plane_crossing(state, arrival_u, arrival_v);
+            if (crossing > 0) {
+                const real observer_energy = camera_observer_energy(state);
+                const real emitted_energy = photon_emission_frame_energy(idx);
+                if (observer_energy > 0.0 && emitted_energy > 0.0 &&
+                    Kokkos::isfinite(observer_energy) && Kokkos::isfinite(emitted_energy)) {
+                    photon_frequency(idx) *= observer_energy / emitted_energy;
+                } else {
+                    stokes[0] = stokes[1] = stokes[2] = stokes[3] = 0.0;
+                }
+                photon_theta_disp(idx) = arrival_u;
+                photon_phi_disp(idx) = arrival_v;
+                photon_phase(idx) = static_cast<std::uint8_t>(PhotonPhase::ImageArrived);
+                photon_terminate(idx) = true;
+            } else if (crossing < 0) {
+                stokes[0] = stokes[1] = stokes[2] = stokes[3] = 0.0;
+                photon_phase(idx) = static_cast<std::uint8_t>(PhotonPhase::Rejected);
+                photon_terminate(idx) = true;
             }
         }
 
@@ -271,56 +422,80 @@ inline void integrate_geodesics(
     const int rank,
     Timers &timers,
     const OutputSelection& output_selection,
+    const SimulationOptions& options,
+    const PhotonGenerationConfig& photon_generation,
     const ScatteringModel& scattering_model = ScatteringModel{},
+    const RadiativeTransferModel& radiative_transfer_model = RadiativeTransferModel{},
     IntegratorType integrator = IntegratorType::RK45)
 {
     const bool fluid_available =
-        fields.r.extent(0) > 0 && fields.theta.extent(0) > 0 && fields.phi.extent(0) > 0 &&
+        fields.r.extent(0) > 0 && fields.r.extent(1) > 0 && fields.r.extent(2) > 0 &&
+        fields.theta.extent(0) == fields.r.extent(0) &&
+        fields.theta.extent(1) == fields.r.extent(1) &&
+        fields.theta.extent(2) == fields.r.extent(2) &&
+        fields.phi.extent(0) == fields.r.extent(0) &&
+        fields.phi.extent(1) == fields.r.extent(1) &&
+        fields.phi.extent(2) == fields.r.extent(2) &&
         fields.density.extent(0) > 0 && fields.temperature.extent(0) > 0 &&
         fields.velocity.extent(3) == 4 && fields.magnetic.extent(3) == 4;
     ScatteringModel active_scattering = scattering_model;
     active_scattering.enabled = scattering_model.enabled && fluid_available;
+    RadiativeTransferModel active_radiative_transfer = radiative_transfer_model;
+    active_radiative_transfer.absorption_enabled =
+        radiative_transfer_model.absorption_enabled && fluid_available;
+    active_radiative_transfer.emission_enabled =
+        radiative_transfer_model.emission_enabled && fluid_available;
     const ScatteringFluidGrid scattering_fluid{
         fields.r, fields.theta, fields.phi,
         fields.density, fields.temperature, fields.velocity, fields.magnetic,
-        fields.coordinate_spacing[0], fields.coordinate_spacing[1], fields.coordinate_spacing[2],
         units.length_cm_per_code, units.time_s_per_code,
         units.density_g_cm3_per_code, units.temperature_k_per_code,
         units.four_velocity_cm_s_per_code, units.magnetic_gauss_per_code,
-        a_BH, M_BH, active_scattering.enabled};
+        a_BH, M_BH, fluid_available};
     ScatteringRandomPool scattering_random_pool(
         active_scattering.seed + static_cast<std::uint64_t>(rank));
-    float termination_fraction = 0.0f;
-    const size_t num_photons = photons.x0.extent(0);
-    timers.AddTimer({"Geodesic Integration", "Termination Count", "Output"});
+    real termination_fraction = 0.0;
+    int mpi_size = 1;
+    MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
+    PhotonDomainMap domain_map(fields, mpi_size);
+    timers.AddTimer({"Geodesic Integration", "Photon Exchange", "Termination Count", "Output"});
     for (int current_step = 0; current_step < max_steps; ++current_step)
     {
         timers.BeginTimer("Geodesic Integration");
         Geodesic_cartesian_kerr_schild step_functor(photons, termination_r_min, termination_r_max, a_BH, M_BH,
             atol_default, rtol_default, min_scale, max_scale, safety,
-            active_scattering, scattering_fluid, scattering_random_pool, integrator);
+            active_scattering, scattering_fluid, scattering_random_pool,
+            active_radiative_transfer, integrator,
+            options.mode, photon_generation, camera_distance, camera_theta, camera_phi,
+            plane_dim1, plane_dim2);
         Kokkos::parallel_for(
         "Integrate Cartesian Kerr-Schild Geodesics",
-        Kokkos::RangePolicy<>(0, num_photons),
+        Kokkos::RangePolicy<>(0, photons.x0.extent(0)),
         step_functor
         );
         timers.EndTimer("Geodesic Integration");
+        timers.BeginTimer("Photon Exchange");
+        exchange_photon_ownership(photons, domain_map, rank, mpi_size, a_BH);
+        timers.EndTimer("Photon Exchange");
         if (current_step % output_interval == 0 || current_step == max_steps - 1) {
             Kokkos::fence();
             timers.BeginTimer("Termination Count");
-            int local_terminated = 0;
+            std::uint64_t local_terminated = 0;
             Kokkos::parallel_reduce(
                 "Count Terminated Photons",
-                Kokkos::RangePolicy<>(0, num_photons),
-                KOKKOS_LAMBDA(const int i, int& local_count) {
+                Kokkos::RangePolicy<>(0, photons.x0.extent(0)),
+                KOKKOS_LAMBDA(const int i, std::uint64_t& local_count) {
                     if (photons.terminate(i)) {
                         local_count += 1;
                     }
                 }, local_terminated
             );
-            int global_terminated = 0;
-            MPI_Allreduce(&local_terminated, &global_terminated, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-            termination_fraction = static_cast<float>(global_terminated) / static_cast<float>(nphotons);
+            std::uint64_t global_terminated = 0;
+            MPI_Allreduce(
+                &local_terminated, &global_terminated, 1,
+                MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
+            termination_fraction = static_cast<real>(global_terminated) /
+                static_cast<real>(nphotons);
             timers.EndTimer("Termination Count");
             if (rank == 0) {
                 INFO("After step " + std::to_string(current_step) + ", termination fraction: " + std::to_string(termination_fraction),
@@ -337,6 +512,9 @@ inline void integrate_geodesics(
         if (termination_fraction >= termination_percent) {
             break;
         }
+    }
+    if (options.mode == SimulationMode::Image) {
+        write_image_products(photons, rank, options);
     }
     if (rank == 0) {
         INFO("Geodesic integration completed.");

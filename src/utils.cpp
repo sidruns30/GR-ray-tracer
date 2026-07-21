@@ -4,39 +4,24 @@
 size_t nr = 0;
 size_t ntheta = 0;
 size_t nphi = 0;
-real r_min = 0.0;
-real r_max = 0.0;
-real theta_min = 0.0;
-real theta_max = 0.0;
-real phi_min = 0.0;
-real phi_max = 0.0;
-real dlog_r = 0.0;
 
 // Black hole parameters. Defaults below are used verbatim unless overridden
-// by a --config TOML file (see src/input/toml_config.hpp).
+// by the runtime TOML file (see src/input/toml_config.hpp).
 real M_BH = 1.0;
 real a_BH = 1.0;
 real R_HORIZON = M_BH + Kokkos::sqrt(M_BH * M_BH - a_BH * a_BH);
 
-// Pinhole camera setup
-bool use_pinhole_camera = false;
+// Image-plane camera setup
 real camera_theta = PI / 4.0;
 real camera_phi = PI / 4.0;
-real target_rmin = 0.0;
-real target_rmax = 2.0;
-
-// Image camera setup
-bool use_image_camera = true;
 real plane_dim1 = 20.0;
 real plane_dim2 = 20.0;
-real plane_theta = PI / 2.0;
-real plane_phi = PI / 4.0;
 
 // Shared camera parameter
 real camera_distance = 10000.0;
 
 // Photon count / run length
-int nphotons = 20;
+std::uint64_t nphotons = 20;
 int max_steps = 10000;
 
 // Geodesic integration control
