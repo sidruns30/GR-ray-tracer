@@ -162,12 +162,15 @@ struct Geodesic_cartesian_kerr_schild {
         }
     }
 
-    // step_accepted drives the retry loop in operator() below.
+    // Returns whether the step was accepted (drives the retry loop in
+    // operator() below) rather than writing it through a bool* -- every other
+    // proven-working function in this file returns real by value or writes
+    // only real* outputs; this is the first (and, until isolated, suspect)
+    // case of a bool output mixed with real* outputs in the same call.
     KOKKOS_FUNCTION
-    void rk45_step(
+    bool rk45_step(
         real* state,
         real* dlambda,
-        bool* step_accepted,
         const real* k1
     ) const
     {
@@ -212,27 +215,25 @@ struct Geodesic_cartesian_kerr_schild {
         }
 
         if (!finite) {
-            *step_accepted = false;
             *dlambda = dt_val * min_step_scale;
-            return;
+            return false;
         }
 
         if (err == 0.0) {
-            *step_accepted = true;
             *dlambda = dt_val * max_step_scale;
             for (int i = 0; i < 8; ++i) state[i] = x5[i];
-            return;
+            return true;
         }
 
         real scale = safety_factor * std::pow(1.0 / err, 0.25);
         scale = std::clamp(scale, min_step_scale, max_step_scale);
         if (err < 1.0) {
-            *step_accepted = true;
             *dlambda = dt_val * scale;
             for (int i = 0; i < 8; ++i) state[i] = x5[i];
+            return true;
         } else {
-            *step_accepted = false;
             *dlambda = dt_val * scale;
+            return false;
         }
     }
 
@@ -307,7 +308,7 @@ struct Geodesic_cartesian_kerr_schild {
             real k1[8];
             compute_rhs(state, k1);
             while (!step_accepted && attempts < max_attempts) {
-                rk45_step(state, &photon_dlambda(idx), &step_accepted, k1);
+                step_accepted = rk45_step(state, &photon_dlambda(idx), k1);
                 if (idx == 0) {
                     printf("[GPUDBG] step=%llu idx=0 rk45 attempt=%d accepted=%d dlambda=%.9e\n",
                            static_cast<unsigned long long>(step_index), attempts,
