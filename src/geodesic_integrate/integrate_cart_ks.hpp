@@ -168,9 +168,7 @@ struct Geodesic_cartesian_kerr_schild {
         real* state,
         real* dlambda,
         bool* step_accepted,
-        const real* k1,
-        real* debug_err_out = nullptr,
-        bool* debug_finite_out = nullptr
+        const real* k1
     ) const
     {
         const real a21 = 1.0 / 4.0;
@@ -213,19 +211,6 @@ struct Geodesic_cartesian_kerr_schild {
             err = std::max(err, ratio);
         }
 
-        if (debug_err_out) *debug_err_out = err;
-        if (debug_finite_out) *debug_finite_out = finite;
-
-        // debug_err_out is only ever non-null for idx==0's call (see operator()
-        // below), so it doubles as "print for this call" without needing idx here.
-        if (debug_err_out) {
-            printf("[GPUDBG]   inside rk45_step: err=%.9e finite=%d x5=(%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f) state_in=(%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f) state_ptr=%p\n",
-                   err, static_cast<int>(finite),
-                   x5[0], x5[1], x5[2], x5[3], x5[4], x5[5], x5[6], x5[7],
-                   state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7],
-                   static_cast<const void*>(state));
-        }
-
         if (!finite) {
             *step_accepted = false;
             *dlambda = dt_val * min_step_scale;
@@ -236,11 +221,6 @@ struct Geodesic_cartesian_kerr_schild {
             *step_accepted = true;
             *dlambda = dt_val * max_step_scale;
             for (int i = 0; i < 8; ++i) state[i] = x5[i];
-            if (debug_err_out) {
-                printf("[GPUDBG]   inside rk45_step after write (err==0 branch): state=(%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f) accepted=%d dlambda=%.9e\n",
-                       state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7],
-                       static_cast<int>(*step_accepted), *dlambda);
-            }
             return;
         }
 
@@ -250,18 +230,9 @@ struct Geodesic_cartesian_kerr_schild {
             *step_accepted = true;
             *dlambda = dt_val * scale;
             for (int i = 0; i < 8; ++i) state[i] = x5[i];
-            if (debug_err_out) {
-                printf("[GPUDBG]   inside rk45_step after write (err<1 branch): state=(%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f) accepted=%d dlambda=%.9e\n",
-                       state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7],
-                       static_cast<int>(*step_accepted), *dlambda);
-            }
         } else {
             *step_accepted = false;
             *dlambda = dt_val * scale;
-            if (debug_err_out) {
-                printf("[GPUDBG]   inside rk45_step reject (err>=1 branch): accepted=%d dlambda=%.9e scale=%.9e\n",
-                       static_cast<int>(*step_accepted), *dlambda, scale);
-            }
         }
     }
 
@@ -336,21 +307,11 @@ struct Geodesic_cartesian_kerr_schild {
             real k1[8];
             compute_rhs(state, k1);
             while (!step_accepted && attempts < max_attempts) {
+                rk45_step(state, &photon_dlambda(idx), &step_accepted, k1);
                 if (idx == 0) {
-                    real dbg_err = -1.0;
-                    bool dbg_finite = true;
-                    real dt_before = photon_dlambda(idx);
-                    printf("[GPUDBG] step=%llu idx=0 caller-side state_ptr=%p dlambda_ptr=%p accepted_ptr=%p k1_ptr=%p\n",
-                           static_cast<unsigned long long>(step_index), static_cast<const void*>(state),
-                           static_cast<const void*>(&photon_dlambda(idx)), static_cast<const void*>(&step_accepted),
-                           static_cast<const void*>(k1));
-                    rk45_step(state, &photon_dlambda(idx), &step_accepted, k1, &dbg_err, &dbg_finite);
-                    printf("[GPUDBG] step=%llu idx=0 rk45 attempt=%d dt_before=%.9e dt_after=%.9e err=%.9e finite=%d accepted=%d state_after=(%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f,%.9f)\n",
-                           static_cast<unsigned long long>(step_index), attempts, dt_before, photon_dlambda(idx),
-                           dbg_err, static_cast<int>(dbg_finite), static_cast<int>(step_accepted),
-                           state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7]);
-                } else {
-                    rk45_step(state, &photon_dlambda(idx), &step_accepted, k1);
+                    printf("[GPUDBG] step=%llu idx=0 rk45 attempt=%d accepted=%d dlambda=%.9e\n",
+                           static_cast<unsigned long long>(step_index), attempts,
+                           static_cast<int>(step_accepted), photon_dlambda(idx));
                 }
                 attempts++;
             }
