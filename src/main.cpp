@@ -4,6 +4,9 @@
 #include "radiative_transfer/initialize_photons.hpp"
 #include "geodesic_integrate/integrate_cart_ks.hpp"
 #include "output/display.hpp"
+#ifdef KOKKOS_ENABLE_CUDA
+#include <cuda_runtime.h>
+#endif
 
 
 int main(int argc, char* argv[]) {
@@ -57,6 +60,25 @@ int main(int argc, char* argv[]) {
 
     // Initialize Kokkos
     Kokkos::initialize(argc, argv);
+    // TEMPORARY: rule out a per-thread stack overflow in the geodesic-
+    // integration kernel silently corrupting execution without CUDA
+    // reporting an error (see idx=0's trace vanishing mid-kernel on an
+    // H200/Hopper90 run despite cudaGetLastError() returning cudaSuccess).
+    // Remove once root-caused.
+#ifdef KOKKOS_ENABLE_CUDA
+    {
+        cudaError_t limit_err = cudaDeviceSetLimit(cudaLimitStackSize, 65536);
+        if (mpi_rank == 0) {
+            if (limit_err == cudaSuccess) {
+                size_t stack_size = 0;
+                cudaDeviceGetLimit(&stack_size, cudaLimitStackSize);
+                INFO("Set CUDA per-thread stack size limit to " + std::to_string(stack_size) + " bytes");
+            } else {
+                ERROR(std::string("Failed to set CUDA stack size limit: ") + cudaGetErrorString(limit_err));
+            }
+        }
+    }
+#endif
     {
         Timers timers(max_steps, output_interval);
         NumpyFieldViews fields; // left default-constructed (empty views) in --vacuum mode
