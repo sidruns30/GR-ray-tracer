@@ -20,9 +20,9 @@ GeodesicObservables compute_geodesic_observables(const real state[8], real a_BH,
     const real y = X[2];
     const real z = X[3];
     const real r = kerr_schild::compute_r(x, y, z, a_BH);
-    const real sin_theta = sqrt(std::max(real(0.0), 1.0 - SQR(z / r)));
+    const real sin_theta = Kokkos::sqrt(Kokkos::fmax(real(0.0), 1.0 - SQR(z / r)));
     const real cos_theta = z / r;
-    const real sin_theta_safe = std::max(real(1e-15), sin_theta);
+    const real sin_theta_safe = Kokkos::fmax(real(1e-15), sin_theta);
 
     obs.norm = cartesian_kerr_schild_norm(X, P, a_BH, M_BH);
     obs.energy = -P[0];

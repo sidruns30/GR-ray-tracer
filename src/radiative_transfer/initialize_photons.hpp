@@ -20,9 +20,9 @@ inline void initialize_photons_pinhole(
     Photons &photons)
 {
     (void)mpi_size;
-    const real cam_x = camera_distance * sin(camera_theta) * cos(camera_phi);
-    const real cam_y = camera_distance * sin(camera_theta) * sin(camera_phi);
-    const real cam_z = camera_distance * cos(camera_theta);
+    const real cam_x = camera_distance * Kokkos::sin(camera_theta) * Kokkos::cos(camera_phi);
+    const real cam_y = camera_distance * Kokkos::sin(camera_theta) * Kokkos::sin(camera_phi);
+    const real cam_z = camera_distance * Kokkos::cos(camera_theta);
     // Local captures of runtime-configurable globals: device code can't read
     // `extern real` globals directly (see kerr_schild_core.hpp), but the
     // KOKKOS_LAMBDA below captures locals in this scope by value, which works.
@@ -42,12 +42,12 @@ inline void initialize_photons_pinhole(
             auto rand_gen = rand_pool.get_state();
             const real radius = rand_gen.drand(0.0, pinhole_aperture_radius_);
             const real azimuth = rand_gen.drand(0, 2.0 * PI);
-            const real screen_u = radius * cos(azimuth);
-            const real screen_v = radius * sin(azimuth);
+            const real screen_u = radius * Kokkos::cos(azimuth);
+            const real screen_v = radius * Kokkos::sin(azimuth);
             const real kx = -cam_x + screen_u;
             const real ky = -cam_y + screen_v;
             const real kz = -cam_z;
-            const real k_norm = sqrt(kx * kx + ky * ky + kz * kz);
+            const real k_norm = Kokkos::sqrt(kx * kx + ky * ky + kz * kz);
             rand_pool.free_state(rand_gen);
             photons.x0(i)  = 0.0;
             photons.x1(i)  = cam_x;
@@ -95,18 +95,18 @@ inline void initialize_photons_image_camera(
     (void)mpi_size;
     // Construct a plane perpendicular to the camera direction at distance camera_distance
     // Sample photons uniformly across the plane area
-    const real plane_x_center = camera_distance * sin(plane_theta) * cos(plane_phi);
-    const real plane_y_center = camera_distance * sin(plane_theta) * sin(plane_phi);
-    const real plane_z_center = camera_distance * cos(plane_theta);
+    const real plane_x_center = camera_distance * Kokkos::sin(plane_theta) * Kokkos::cos(plane_phi);
+    const real plane_y_center = camera_distance * Kokkos::sin(plane_theta) * Kokkos::sin(plane_phi);
+    const real plane_z_center = camera_distance * Kokkos::cos(plane_theta);
     // Orthonormal tangent basis at the camera's spherical position.
     const real theta_hat[3] = {
-        cos(plane_theta) * cos(plane_phi),
-        cos(plane_theta) * sin(plane_phi),
-        -sin(plane_theta)
+        Kokkos::cos(plane_theta) * Kokkos::cos(plane_phi),
+        Kokkos::cos(plane_theta) * Kokkos::sin(plane_phi),
+        -Kokkos::sin(plane_theta)
         };
     const real phi_hat[3] = {
-        -sin(plane_phi),
-        cos(plane_phi),
+        -Kokkos::sin(plane_phi),
+        Kokkos::cos(plane_phi),
         0.0
         };
     // Local captures of runtime-configurable globals -- see the comment in
@@ -135,7 +135,7 @@ inline void initialize_photons_image_camera(
             real kx = -plane_x_center;
             real ky = -plane_y_center;
             real kz = -plane_z_center;
-            real k_norm = sqrt(kx * kx + ky * ky + kz * kz);
+            real k_norm = Kokkos::sqrt(kx * kx + ky * ky + kz * kz);
             kx /= k_norm;
             ky /= k_norm;
             kz /= k_norm;

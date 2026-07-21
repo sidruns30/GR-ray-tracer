@@ -53,6 +53,7 @@ r_max = 1000000.0
 
 [output]
 interval = {steps + 1}
+stride = 1
 variables = ["id"]
 """,
         encoding="utf-8",

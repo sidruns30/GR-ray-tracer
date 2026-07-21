@@ -12,8 +12,8 @@ int main() {
     };
 
     rk_detail::rk4_step<2>(state_rk4, 0.5, rhs);
-    passed = passed && std::abs(state_rk4[0] - 0.0) < 1e-14;
-    passed = passed && std::abs(state_rk4[1] + 2.0) < 1e-14;
+    passed = passed && Kokkos::abs(state_rk4[0] - 0.0) < 1e-14;
+    passed = passed && Kokkos::abs(state_rk4[1] + 2.0) < 1e-14;
 
     real state_rk45[2] = {1.0, -2.0};
     real dt = 0.5;
@@ -23,7 +23,7 @@ int main() {
     rk_detail::rk45_step<2>(state_rk45, &dt, &accepted, rhs, k1,
                              atol_default, rtol_default, min_scale, max_scale, safety);
     passed = passed && accepted;
-    passed = passed && std::abs(state_rk45[0] - 0.0) < 1e-14;
-    passed = passed && std::abs(state_rk45[1] + 2.0) < 1e-14;
+    passed = passed && Kokkos::abs(state_rk45[0] - 0.0) < 1e-14;
+    passed = passed && Kokkos::abs(state_rk45[1] + 2.0) < 1e-14;
     return passed ? EXIT_SUCCESS : EXIT_FAILURE;
 }

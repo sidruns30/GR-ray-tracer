@@ -31,6 +31,8 @@ struct NumpyFieldViews {
     Kokkos::View<real****> magnetic;
     DomainDecomposition decomposition;
     std::array<std::size_t, 3> global_extents{0, 0, 0};
+    // Logarithmic r spacing followed by linear theta and phi spacing.
+    std::array<real, 3> coordinate_spacing{0.0, 0.0, 0.0};
 };
 
 inline std::vector<real> load_coordinate_values(const std::string& filename) {
@@ -49,13 +51,13 @@ inline void validate_coordinate_spacing(const std::vector<real>& values,
                                         const std::string& name,
                                         bool logarithmic) {
     const real spacing = logarithmic
-        ? std::log(values[1] / values[0])
+        ? Kokkos::log(values[1] / values[0])
         : values[1] - values[0];
     for (std::size_t i = 1; i + 1 < values.size(); ++i) {
         const real current = logarithmic
-            ? std::log(values[i + 1] / values[i])
+            ? Kokkos::log(values[i + 1] / values[i])
             : values[i + 1] - values[i];
-        if (std::abs(current - spacing) > 1.0e-2) {
+        if (Kokkos::abs(current - spacing) > 1.0e-2) {
             throw std::runtime_error(name + " coordinate array has non-uniform spacing");
         }
     }
@@ -184,6 +186,10 @@ inline NumpyFieldViews load_numpy_field_bundle(
 
     NumpyFieldViews views;
     views.global_extents = {r_values.size(), theta_values.size(), phi_values.size()};
+    views.coordinate_spacing = {
+        Kokkos::log(r_values[1] / r_values[0]),
+        theta_values[1] - theta_values[0],
+        phi_values[1] - phi_values[0]};
     views.decomposition = decomposition_spec.resolve(mpi_size, mpi_rank, views.global_extents);
     views.r = make_coordinate_view(r_values, views.decomposition.ranges[0], "r");
     views.theta = make_coordinate_view(theta_values, views.decomposition.ranges[1], "theta");
@@ -202,6 +208,6 @@ inline NumpyFieldViews load_numpy_field_bundle(
     theta_max = theta_values.back();
     phi_min = phi_values.front();
     phi_max = phi_values.back();
-    dlog_r = std::log(r_values[1] / r_values[0]);
+    dlog_r = views.coordinate_spacing[0];
     return views;
 }

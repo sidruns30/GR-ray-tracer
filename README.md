@@ -72,6 +72,13 @@ generate placeholder grid data with `python3 src/create_example_data.py
 trace camera-created vacuum geodesics. `--vacuum` also forces scattering off, since
 scattering has no medium to scatter off of without a density grid.
 
+Scattering samples the nearest rank-local fluid cell and receives its CGS
+density, temperature, coordinate four-velocity, and fluid-frame magnetic
+four-vector. It is skipped when no local fluid cell covers the photon or when
+the run is in vacuum. The current grey model scatters elastically and
+isotropically in the fluid tetrad; its random draws come from a Kokkos random
+pool on both CPU and GPU backends.
+
 ## Command-line flags
 
 | Flag | Default | Description |
@@ -218,8 +225,12 @@ Each archive contains named NumPy arrays. Select arrays in the TOML file:
 ```toml
 [output]
 interval = 20
+stride = 4
 variables = ["id", "frequency", "x1", "x2", "x3", "k0", "I", "terminate", "image_I"]
 ```
+
+`output.stride = N` writes rank-local photon indices `0, N, 2N, ...` while
+observation products continue to use all photons. The default stride is one.
 
 The command line can override the TOML selection:
 
@@ -250,8 +261,9 @@ are present.
 ## Tests
 
 The build includes NumPy/domain-decomposition regression tests, fluid-frame
-photon generation checks, geodesic observable checks, and RK4/RK45 convergence
-tests. Run the full suite or only the convergence test with:
+photon generation and scattering checks, output-stride checks, geodesic
+observable checks, and RK4/RK45 convergence tests. Run the full suite or only
+the convergence test with:
 
 ```bash
 ctest --test-dir build-cpu --output-on-failure

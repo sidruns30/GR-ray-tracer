@@ -25,7 +25,7 @@ real max_error(const std::array<real, 8>& state,
                const std::array<real, 8>& reference) {
     real error = 0.0;
     for (int i = 0; i < 8; ++i) {
-        error = std::max(error, std::abs(state[i] - reference[i]));
+        error = Kokkos::fmax(error, Kokkos::abs(state[i] - reference[i]));
     }
     return error;
 }
@@ -41,7 +41,7 @@ real adaptive_oscillator_error(real tolerance, bool& passed) {
     constexpr real final_time = 2.0;
     int attempts = 0;
     while (time < final_time && attempts++ < 100000) {
-        const real attempted_dt = std::min(proposed_dt, final_time - time);
+        const real attempted_dt = Kokkos::fmin(proposed_dt, final_time - time);
         real next_dt = attempted_dt;
         real k1[2];
         rhs(state, k1);
@@ -53,8 +53,8 @@ real adaptive_oscillator_error(real tolerance, bool& passed) {
         if (accepted) time += attempted_dt;
     }
     passed = passed && attempts < 100000;
-    return std::max(std::abs(state[0] - std::cos(final_time)),
-                    std::abs(state[1] + std::sin(final_time)));
+    return Kokkos::fmax(Kokkos::abs(state[0] - Kokkos::cos(final_time)),
+                        Kokkos::abs(state[1] + Kokkos::sin(final_time)));
 }
 
 } // namespace

@@ -16,7 +16,7 @@ real dlog_r = 0.0;
 // by a --config TOML file (see src/input/toml_config.hpp).
 real M_BH = 1.0;
 real a_BH = 1.0;
-real R_HORIZON = M_BH + sqrt(M_BH * M_BH - a_BH * a_BH);
+real R_HORIZON = M_BH + Kokkos::sqrt(M_BH * M_BH - a_BH * a_BH);
 
 // Pinhole camera setup
 bool use_pinhole_camera = false;
@@ -49,3 +49,4 @@ real rtol_default = 1e-8;
 
 // Output cadence
 size_t output_interval = 1;
+size_t output_stride = 1;

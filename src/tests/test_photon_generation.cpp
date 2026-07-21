@@ -60,16 +60,16 @@ int main(int argc, char** argv) {
         real total_energy = 0.0;
         for (int i = 0; i < packets_per_cell; ++i) {
             passed = passed && ids(i) == static_cast<std::uint32_t>(123 + i);
-            passed = passed && frequencies(i) > 0.0 && std::isfinite(frequencies(i));
+            passed = passed && frequencies(i) > 0.0 && Kokkos::isfinite(frequencies(i));
             passed = passed && !terminated(i);
             total_energy += energies(i);
             const real state[8] = {
                 x0(i), x1(i), x2(i), x3(i), k0(i), k1(i), k2(i), k3(i)};
             passed = passed &&
-                std::abs(compute_geodesic_observables(state, a_BH, M_BH).norm) < 1.0e-10;
+                Kokkos::abs(compute_geodesic_observables(state, a_BH, M_BH).norm) < 1.0e-10;
         }
         passed = passed &&
-            std::abs(total_energy - generation.energy_per_cell_erg) < 1.0e-12;
+            Kokkos::abs(total_energy - generation.energy_per_cell_erg) < 1.0e-12;
 
         // Power-law generation samples the configured energy spectrum and
         // divides the cell's total represented energy equally among packets.

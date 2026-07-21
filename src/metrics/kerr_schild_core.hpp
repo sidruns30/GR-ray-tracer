@@ -28,8 +28,8 @@ KOKKOS_INLINE_FUNCTION
 real compute_r(real x, real y, real z, real a_BH) {
     const real rsq = SQR(x) + SQR(y) + SQR(z);
     const real A = rsq - SQR(a_BH);
-    const real S = sqrt(SQR(A) + 4.0 * SQR(a_BH * z));
-    return sqrt(0.5 * (A + S));
+    const real S = Kokkos::sqrt(SQR(A) + 4.0 * SQR(a_BH * z));
+    return Kokkos::sqrt(0.5 * (A + S));
 }
 
 // r and dr/dx^k for k=0,1,2 (x,y,z)
@@ -37,8 +37,8 @@ KOKKOS_INLINE_FUNCTION
 void compute_r_and_deriv(real x, real y, real z, real a_BH, real& r, real dr[3]) {
     const real rsq = SQR(x) + SQR(y) + SQR(z);
     const real A = rsq - SQR(a_BH);
-    const real S = sqrt(SQR(A) + 4.0 * SQR(a_BH * z));
-    r = sqrt(0.5 * (A + S));
+    const real S = Kokkos::sqrt(SQR(A) + 4.0 * SQR(a_BH * z));
+    r = Kokkos::sqrt(0.5 * (A + S));
     const real one_plus_A_over_S = 1.0 + A / S;
     dr[0] = x * one_plus_A_over_S / (2.0 * r);
     dr[1] = y * one_plus_A_over_S / (2.0 * r);
@@ -211,7 +211,7 @@ bool null_covariant_momentum_from_spatial_direction(const real X[4], const real 
     }
     const real disc = SQR(b) - 4.0 * a * c;
     if (disc < 0.0) return false;
-    const real sq = sqrt(disc);
+    const real sq = Kokkos::sqrt(disc);
     const real K0_1 = (-b + sq) / (2.0 * a);
     const real K0_2 = (-b - sq) / (2.0 * a);
     const real K0 = (K0_1 > 0.0) ? K0_1 : K0_2;

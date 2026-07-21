@@ -10,15 +10,15 @@ int main() {
     const auto obs_a = compute_geodesic_observables(state_a, a_BH, M_BH);
     const auto obs_b = compute_geodesic_observables(state_b, a_BH, M_BH);
 
-    if (std::abs(obs_a.energy - 1.0) >= 1e-14) return EXIT_FAILURE;
-    if (std::abs(obs_b.energy - 1.0) >= 1e-14) return EXIT_FAILURE;
-    if (std::abs(obs_a.angular_momentum_z) >= 1e-14) return EXIT_FAILURE;
-    if (std::abs(obs_b.angular_momentum_z) >= 1e-14) return EXIT_FAILURE;
-    if (std::abs(obs_a.carter) >= 1e-12) return EXIT_FAILURE;
-    if (std::abs(obs_b.carter) >= 1e-12) return EXIT_FAILURE;
-    if (std::abs(obs_a.energy - obs_b.energy) >= 1e-14) return EXIT_FAILURE;
-    if (std::abs(obs_a.angular_momentum_z - obs_b.angular_momentum_z) >= 1e-14) return EXIT_FAILURE;
-    if (std::abs(obs_a.carter - obs_b.carter) >= 1e-12) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_a.energy - 1.0) >= 1e-14) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_b.energy - 1.0) >= 1e-14) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_a.angular_momentum_z) >= 1e-14) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_b.angular_momentum_z) >= 1e-14) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_a.carter) >= 1e-12) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_b.carter) >= 1e-12) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_a.energy - obs_b.energy) >= 1e-14) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_a.angular_momentum_z - obs_b.angular_momentum_z) >= 1e-14) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_a.carter - obs_b.carter) >= 1e-12) return EXIT_FAILURE;
 
     // Nonzero-y case: y=0 states above can't distinguish a correct L_z = x*p_y - y*p_x
     // from a broken formula (e.g. a sign flip, or a formula that only ever used x).
@@ -27,8 +27,8 @@ int main() {
     const auto obs_c = compute_geodesic_observables(state_c, a_BH, M_BH);
     const real expected_energy_c = 2.0;
     const real expected_Lz_c = 3.0 * (-0.3) - 4.0 * 0.5; // x*p_y - y*p_x = -2.9
-    if (std::abs(obs_c.energy - expected_energy_c) >= 1e-14) return EXIT_FAILURE;
-    if (std::abs(obs_c.angular_momentum_z - expected_Lz_c) >= 1e-14) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_c.energy - expected_energy_c) >= 1e-14) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_c.angular_momentum_z - expected_Lz_c) >= 1e-14) return EXIT_FAILURE;
 
     // Regression guard for the covariant-momentum initialization fix: a photon
     // wavevector built via null_covariant_momentum_from_spatial_direction at a
@@ -42,7 +42,7 @@ int main() {
     }
     real state_null[8] = {X[0], X[1], X[2], X[3], p_cov[0], p_cov[1], p_cov[2], p_cov[3]};
     const auto obs_null = compute_geodesic_observables(state_null, a_BH, M_BH);
-    if (std::abs(obs_null.norm) >= 1e-10) return EXIT_FAILURE;
+    if (Kokkos::abs(obs_null.norm) >= 1e-10) return EXIT_FAILURE;
 
     // The optimized Hamiltonian contraction must match the explicit metric
     // derivative used by the original implementation.
@@ -54,7 +54,7 @@ int main() {
     for (int mu = 0; mu < 4; ++mu) {
         real expected_dx = 0.0;
         for (int nu = 0; nu < 4; ++nu) expected_dx += ginv[mu][nu] * p_cov[nu];
-        if (std::abs(rhs[mu] - expected_dx) >= 1e-12) return EXIT_FAILURE;
+        if (Kokkos::abs(rhs[mu] - expected_dx) >= 1e-12) return EXIT_FAILURE;
 
         real derivative_contraction = 0.0;
         for (int alpha = 0; alpha < 4; ++alpha) {
@@ -62,7 +62,7 @@ int main() {
                 derivative_contraction += dginv[mu][alpha][beta] * p_cov[alpha] * p_cov[beta];
             }
         }
-        if (std::abs(rhs[4 + mu] + 0.5 * derivative_contraction) >= 1e-12) return EXIT_FAILURE;
+        if (Kokkos::abs(rhs[4 + mu] + 0.5 * derivative_contraction) >= 1e-12) return EXIT_FAILURE;
     }
 
     return 0;

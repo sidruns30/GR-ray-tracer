@@ -9,32 +9,52 @@
 #include "../radiative_transfer/observation.hpp"
 #include "../utils.hpp"
 
+template <typename HostView>
+auto make_strided_host_values(const HostView& source,
+                              std::size_t source_count,
+                              std::size_t stride) {
+    using value_type = typename HostView::non_const_value_type;
+    const std::size_t output_count = source_count == 0 ? 0 : 1 + (source_count - 1) / stride;
+    std::vector<value_type> values(output_count);
+    for (std::size_t output_index = 0; output_index < output_count; ++output_index) {
+        values[output_index] = source(output_index * stride);
+    }
+    return values;
+}
+
 inline void add_photon_array(cnpy::NpzWriter& archive,
                              const Photons& photons,
                              const std::string& name,
-                             std::size_t photon_count) {
-    const std::vector<std::size_t> shape{photon_count};
-    if (name == "id") archive.add(name, photons.id_host.data(), shape);
-    else if (name == "frequency") archive.add(name, photons.frequency_host.data(), shape);
-    else if (name == "x0") archive.add(name, photons.x0_host.data(), shape);
-    else if (name == "x1") archive.add(name, photons.x1_host.data(), shape);
-    else if (name == "x2") archive.add(name, photons.x2_host.data(), shape);
-    else if (name == "x3") archive.add(name, photons.x3_host.data(), shape);
-    else if (name == "k0") archive.add(name, photons.k0_host.data(), shape);
-    else if (name == "k1") archive.add(name, photons.k1_host.data(), shape);
-    else if (name == "k2") archive.add(name, photons.k2_host.data(), shape);
-    else if (name == "k3") archive.add(name, photons.k3_host.data(), shape);
-    else if (name == "I") archive.add(name, photons.I_host.data(), shape);
-    else if (name == "Q") archive.add(name, photons.Q_host.data(), shape);
-    else if (name == "U") archive.add(name, photons.U_host.data(), shape);
-    else if (name == "V") archive.add(name, photons.V_host.data(), shape);
-    else if (name == "dlambda") archive.add(name, photons.dlambda_host.data(), shape);
-    else if (name == "theta_disp") archive.add(name, photons.theta_disp_host.data(), shape);
-    else if (name == "phi_disp") archive.add(name, photons.phi_disp_host.data(), shape);
+                             std::size_t photon_count,
+                             std::size_t stride) {
+    const std::size_t output_count = photon_count == 0 ? 0 : 1 + (photon_count - 1) / stride;
+    const std::vector<std::size_t> shape{output_count};
+    const auto add_strided = [&](const auto& source) {
+        const auto values = make_strided_host_values(source, photon_count, stride);
+        archive.add(name, values.data(), shape);
+    };
+    if (name == "id") add_strided(photons.id_host);
+    else if (name == "frequency") add_strided(photons.frequency_host);
+    else if (name == "x0") add_strided(photons.x0_host);
+    else if (name == "x1") add_strided(photons.x1_host);
+    else if (name == "x2") add_strided(photons.x2_host);
+    else if (name == "x3") add_strided(photons.x3_host);
+    else if (name == "k0") add_strided(photons.k0_host);
+    else if (name == "k1") add_strided(photons.k1_host);
+    else if (name == "k2") add_strided(photons.k2_host);
+    else if (name == "k3") add_strided(photons.k3_host);
+    else if (name == "I") add_strided(photons.I_host);
+    else if (name == "Q") add_strided(photons.Q_host);
+    else if (name == "U") add_strided(photons.U_host);
+    else if (name == "V") add_strided(photons.V_host);
+    else if (name == "dlambda") add_strided(photons.dlambda_host);
+    else if (name == "theta_disp") add_strided(photons.theta_disp_host);
+    else if (name == "phi_disp") add_strided(photons.phi_disp_host);
     else if (name == "terminate") {
-        std::vector<std::uint8_t> terminated(photon_count);
-        for (std::size_t i = 0; i < photon_count; ++i) {
-            terminated[i] = photons.terminate_host(i) ? 1u : 0u;
+        std::vector<std::uint8_t> terminated(output_count);
+        for (std::size_t output_index = 0; output_index < output_count; ++output_index) {
+            terminated[output_index] =
+                photons.terminate_host(output_index * stride) ? 1u : 0u;
         }
         archive.add(name, terminated.data(), shape);
     }
@@ -89,7 +109,7 @@ inline void write_output_step(Photons& photons,
                 name == "spectrum_frequency_hz" || name == "spectrum_I") {
                 add_observation_array(archive, *observations, name);
             } else {
-                add_photon_array(archive, photons, name, photon_count);
+                add_photon_array(archive, photons, name, photon_count, output_stride);
             }
         }
         archive.close();

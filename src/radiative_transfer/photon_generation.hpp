@@ -30,7 +30,7 @@ struct UnitConversions {
             magnetic_gauss_per_code
         };
         for (const real value : values) {
-            if (!(value > 0.0) || !std::isfinite(value)) {
+            if (!(value > 0.0) || !Kokkos::isfinite(value)) {
                 throw std::runtime_error("all [units] conversion factors must be finite and positive");
             }
         }
@@ -52,26 +52,26 @@ struct PhotonGenerationConfig {
         if (superphotons_per_cell <= 0) {
             throw std::runtime_error("photons.superphotons_per_cell must be positive");
         }
-        if (!(energy_per_cell_erg >= 0.0) || !std::isfinite(energy_per_cell_erg)) {
+        if (!(energy_per_cell_erg >= 0.0) || !Kokkos::isfinite(energy_per_cell_erg)) {
             throw std::runtime_error("photons.energy_per_cell_erg must be finite and non-negative");
         }
-        if (!(camera_frequency_hz > 0.0) || !std::isfinite(camera_frequency_hz)) {
+        if (!(camera_frequency_hz > 0.0) || !Kokkos::isfinite(camera_frequency_hz)) {
             throw std::runtime_error("photons.camera_frequency_hz must be finite and positive");
         }
-        if (!(camera_packet_energy_erg >= 0.0) || !std::isfinite(camera_packet_energy_erg)) {
+        if (!(camera_packet_energy_erg >= 0.0) || !Kokkos::isfinite(camera_packet_energy_erg)) {
             throw std::runtime_error("photons.camera_packet_energy_erg must be finite and non-negative");
         }
         if (generator == PhotonGeneratorType::PowerLaw) {
-            if (!std::isfinite(power_law_slope)) {
+            if (!Kokkos::isfinite(power_law_slope)) {
                 throw std::runtime_error("photons.power_law_slope must be finite");
             }
             if (!(nu_min_hz > 0.0) || !(nu_max_hz > nu_min_hz) ||
-                !std::isfinite(nu_min_hz) || !std::isfinite(nu_max_hz)) {
+                !Kokkos::isfinite(nu_min_hz) || !Kokkos::isfinite(nu_max_hz)) {
                 throw std::runtime_error("power-law generation requires 0 < photons.nu_min_hz < photons.nu_max_hz");
             }
         }
         if (generator == PhotonGeneratorType::Custom &&
-            (!(custom_frequency_hz > 0.0) || !std::isfinite(custom_frequency_hz))) {
+            (!(custom_frequency_hz > 0.0) || !Kokkos::isfinite(custom_frequency_hz))) {
             throw std::runtime_error("photons.custom_frequency_hz must be finite and positive");
         }
     }

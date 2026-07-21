@@ -228,7 +228,8 @@ int main(int argc, char* argv[]) {
         // Integrate geodesics
         integrate_geodesics(
             photons,
-            fields.r, fields.theta, fields.phi, fields.density, fields.temperature,
+            fields,
+            units,
             mpi_rank, timers,
             output_selection,
             ScatteringModel{

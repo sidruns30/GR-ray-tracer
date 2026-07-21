@@ -31,10 +31,12 @@ count = 20                        # total photons traced, split across MPI ranks
 generator = "blackbody"           # blackbody, power-law, or custom
 superphotons_per_cell = 4
 energy_per_cell_erg = 1.0
-power_law_slope = 2.0             # dE/dnu proportional to nu^(-slope)
-nu_min_hz = 1.0e9
-nu_max_hz = 1.0e20
-custom_frequency_hz = 2.30e11
+# Power-law-only settings; uncomment when generator = "power-law".
+# power_law_slope = 2.0           # dE/dnu proportional to nu^(-slope)
+# nu_min_hz = 1.0e9
+# nu_max_hz = 1.0e20
+# Custom-generator example; uncomment when generator = "custom".
+# custom_frequency_hz = 2.30e11
 # Camera-created packets are monochromatic unless the camera initializer is customized.
 camera_frequency_hz = 2.30e11
 camera_packet_energy_erg = 1.0
@@ -69,5 +71,6 @@ rtol = 1e-8
 
 [output]
 interval = 1                  # write one archive per rank every N steps
+stride = 1                    # write every Nth rank-local photon
 # Arrays included in each output_step_*.npz archive.
 variables = ["id", "frequency", "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3", "I", "Q", "U", "V", "image_I", "image_Q", "image_U", "image_V", "lightcurve_I", "spectrum_frequency_hz", "spectrum_I"]

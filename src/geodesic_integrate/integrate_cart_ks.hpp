@@ -5,6 +5,7 @@
 #include "../output/display.hpp"
 #include "../metrics/kerr_schild_core.hpp"
 #include "../radiative_transfer/scattering.hpp"
+#include "../input/load_python_arrays.hpp"
 
 struct Geodesic_cartesian_kerr_schild {
     Kokkos::View<real*> photon_x0;
@@ -15,6 +16,7 @@ struct Geodesic_cartesian_kerr_schild {
     Kokkos::View<real*> photon_k1;
     Kokkos::View<real*> photon_k2;
     Kokkos::View<real*> photon_k3;
+    Kokkos::View<real*> photon_frequency;
     Kokkos::View<real*> photon_I;
     Kokkos::View<real*> photon_Q;
     Kokkos::View<real*> photon_U;
@@ -38,7 +40,8 @@ struct Geodesic_cartesian_kerr_schild {
     const real max_step_scale;
     const real safety_factor;
     const ScatteringModel scattering_model;
-    const std::size_t step_index;
+    const ScatteringFluidGrid scattering_fluid;
+    ScatteringRandomPool scattering_random_pool;
     const IntegratorType integrator;
 
     Geodesic_cartesian_kerr_schild(
@@ -47,17 +50,20 @@ struct Geodesic_cartesian_kerr_schild {
       real a_BH_, real M_BH_,
       real atol_, real rtol_, real min_step_scale_, real max_step_scale_, real safety_factor_,
       const ScatteringModel& scattering_model_ = ScatteringModel{},
-      std::size_t step_index_ = 0,
+      const ScatteringFluidGrid& scattering_fluid_ = ScatteringFluidGrid{},
+      const ScatteringRandomPool& scattering_random_pool_ = ScatteringRandomPool(1),
       IntegratorType integrator_ = IntegratorType::RK45)
       : photon_x0(photon_.x0), photon_x1(photon_.x1), photon_x2(photon_.x2), photon_x3(photon_.x3),
        photon_k0(photon_.k0), photon_k1(photon_.k1), photon_k2(photon_.k2), photon_k3(photon_.k3),
+       photon_frequency(photon_.frequency),
        photon_I(photon_.I), photon_Q(photon_.Q), photon_U(photon_.U), photon_V(photon_.V),
        photon_dlambda(photon_.dlambda), photon_terminate(photon_.terminate),
        r_term_min(r_term_min_), r_term_max(r_term_max_),
        a_BH(a_BH_), M_BH(M_BH_),
        atol(atol_), rtol(rtol_), min_step_scale(min_step_scale_), max_step_scale(max_step_scale_),
        safety_factor(safety_factor_),
-       scattering_model(scattering_model_), step_index(step_index_), integrator(integrator_) {};
+       scattering_model(scattering_model_), scattering_fluid(scattering_fluid_),
+       scattering_random_pool(scattering_random_pool_), integrator(integrator_) {};
 
     KOKKOS_FUNCTION
     void compute_rhs(const real state[8], real dstates[8]) const {
@@ -229,7 +235,17 @@ struct Geodesic_cartesian_kerr_schild {
             photon_U(idx),
             photon_V(idx)
         };
-        maybe_scatter_photon(state, stokes, scattering_model, static_cast<std::size_t>(idx), step_index);
+        if (scattering_model.enabled) {
+            FluidCellCGS fluid;
+            real tetrad[4][4];
+            if (sample_scattering_fluid(state, scattering_fluid, fluid, tetrad)) {
+                auto random = scattering_random_pool.get_state();
+                maybe_scatter_photon(
+                    state, stokes, photon_frequency(idx), scattering_model,
+                    fluid, tetrad, a_BH, M_BH, random);
+                scattering_random_pool.free_state(random);
+            }
+        }
 
         photon_x0(idx) = state[IT];
         photon_x1(idx) = state[IX];
@@ -250,24 +266,30 @@ struct Geodesic_cartesian_kerr_schild {
 // Perform geodesic integration until terminate_percent of photons have terminated
 inline void integrate_geodesics(
     Photons &photons,
-    const Kokkos::View<real*>& r,
-    const Kokkos::View<real*>& theta,
-    const Kokkos::View<real*>& phi,
-    const Kokkos::View<real***>& rho,
-    const Kokkos::View<real***>& Tgas,
+    const NumpyFieldViews& fields,
+    const UnitConversions& units,
     const int rank,
     Timers &timers,
     const OutputSelection& output_selection,
     const ScatteringModel& scattering_model = ScatteringModel{},
     IntegratorType integrator = IntegratorType::RK45)
 {
-    // The current geodesic and scattering models do not yet sample the fluid
-    // grid, but the integration interface keeps it available for radiative transfer.
-    (void)r;
-    (void)theta;
-    (void)phi;
-    (void)rho;
-    (void)Tgas;
+    const bool fluid_available =
+        fields.r.extent(0) > 0 && fields.theta.extent(0) > 0 && fields.phi.extent(0) > 0 &&
+        fields.density.extent(0) > 0 && fields.temperature.extent(0) > 0 &&
+        fields.velocity.extent(3) == 4 && fields.magnetic.extent(3) == 4;
+    ScatteringModel active_scattering = scattering_model;
+    active_scattering.enabled = scattering_model.enabled && fluid_available;
+    const ScatteringFluidGrid scattering_fluid{
+        fields.r, fields.theta, fields.phi,
+        fields.density, fields.temperature, fields.velocity, fields.magnetic,
+        fields.coordinate_spacing[0], fields.coordinate_spacing[1], fields.coordinate_spacing[2],
+        units.length_cm_per_code, units.time_s_per_code,
+        units.density_g_cm3_per_code, units.temperature_k_per_code,
+        units.four_velocity_cm_s_per_code, units.magnetic_gauss_per_code,
+        a_BH, M_BH, active_scattering.enabled};
+    ScatteringRandomPool scattering_random_pool(
+        active_scattering.seed + static_cast<std::uint64_t>(rank));
     float termination_fraction = 0.0f;
     const size_t num_photons = photons.x0.extent(0);
     timers.AddTimer({"Geodesic Integration", "Termination Count", "Output"});
@@ -276,7 +298,7 @@ inline void integrate_geodesics(
         timers.BeginTimer("Geodesic Integration");
         Geodesic_cartesian_kerr_schild step_functor(photons, termination_r_min, termination_r_max, a_BH, M_BH,
             atol_default, rtol_default, min_scale, max_scale, safety,
-            scattering_model, static_cast<std::size_t>(current_step), integrator);
+            active_scattering, scattering_fluid, scattering_random_pool, integrator);
         Kokkos::parallel_for(
         "Integrate Cartesian Kerr-Schild Geodesics",
         Kokkos::RangePolicy<>(0, num_photons),

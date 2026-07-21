@@ -60,4 +60,12 @@ if(BUILD_TESTING)
     target_link_libraries(test_convergence PRIVATE grraytracer_core)
     add_test(NAME convergence COMMAND test_convergence)
     set_tests_properties(convergence PROPERTIES LABELS convergence)
+
+    add_executable(test_scattering tests/test_scattering.cpp)
+    target_link_libraries(test_scattering PRIVATE grraytracer_core)
+    add_test(NAME scattering COMMAND test_scattering)
+
+    add_executable(test_output_stride tests/test_output_stride.cpp)
+    target_link_libraries(test_output_stride PRIVATE grraytracer_core)
+    add_test(NAME output_stride COMMAND test_output_stride)
 endif()

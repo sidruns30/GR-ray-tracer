@@ -168,4 +168,5 @@ inline constexpr real max_scale = 10.0;
 
 // Parameters for output
 extern size_t output_interval;
+extern size_t output_stride;
 inline std::string output_directory = "./output";

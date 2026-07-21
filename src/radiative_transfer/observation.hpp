@@ -1,6 +1,5 @@
 #pragma once
 
-#include <algorithm>
 #include <vector>
 
 #include "../utils.hpp"
@@ -64,7 +63,9 @@ inline void accumulate_observation(ObservationProducts& products,
 
 inline std::size_t bin_from_value(real value, real min_value, real span, std::size_t bins) {
     const real scaled = (value - min_value) / span;
-    return static_cast<std::size_t>(std::clamp<real>(scaled * static_cast<real>(bins - 1), 0.0, static_cast<real>(bins - 1)));
+    return static_cast<std::size_t>(Kokkos::fmax(
+        real(0.0), Kokkos::fmin(
+            scaled * static_cast<real>(bins - 1), static_cast<real>(bins - 1))));
 }
 
 // The caller must copy the required photon fields to host before invoking this
@@ -92,29 +93,29 @@ inline ObservationProducts build_observation_products(const Photons& photons,
         screen_half1 = 1.0;
         screen_half2 = 1.0;
     }
-    const real screen_span1 = std::max(real(1e-15), 2.0 * screen_half1);
-    const real screen_span2 = std::max(real(1e-15), 2.0 * screen_half2);
+    const real screen_span1 = Kokkos::fmax(real(1e-15), 2.0 * screen_half1);
+    const real screen_span2 = Kokkos::fmax(real(1e-15), 2.0 * screen_half2);
 
     // These bins use per-rank checkpoint bounds; their indices are not global axes.
     real t_min = photons.x0_host(0), t_max = photons.x0_host(0);
     real nu_min = photons.frequency_host(0), nu_max = photons.frequency_host(0);
     for (std::size_t i = 1; i < n; ++i) {
-        t_min = std::min(t_min, photons.x0_host(i));
-        t_max = std::max(t_max, photons.x0_host(i));
-        nu_min = std::min(nu_min, photons.frequency_host(i));
-        nu_max = std::max(nu_max, photons.frequency_host(i));
+        t_min = Kokkos::fmin(t_min, photons.x0_host(i));
+        t_max = Kokkos::fmax(t_max, photons.x0_host(i));
+        nu_min = Kokkos::fmin(nu_min, photons.frequency_host(i));
+        nu_max = Kokkos::fmax(nu_max, photons.frequency_host(i));
     }
-    const real t_span = std::max(real(1e-15), t_max - t_min);
-    const real log_nu_min = std::log10(std::max(real(1e-300), nu_min));
-    const real log_nu_max = std::log10(std::max(real(1e-300), nu_max));
-    const real log_nu_span = std::max(real(1e-15), log_nu_max - log_nu_min);
+    const real t_span = Kokkos::fmax(real(1e-15), t_max - t_min);
+    const real log_nu_min = Kokkos::log10(Kokkos::fmax(real(1e-300), nu_min));
+    const real log_nu_max = Kokkos::log10(Kokkos::fmax(real(1e-300), nu_max));
+    const real log_nu_span = Kokkos::fmax(real(1e-15), log_nu_max - log_nu_min);
 
     for (std::size_t bin = 0; bin < spectrum_bins; ++bin) {
         const real fraction = spectrum_bins > 1
             ? static_cast<real>(bin) / static_cast<real>(spectrum_bins - 1)
             : 0.0;
         products.spectrum_frequency_hz[bin] =
-            std::pow(real(10.0), log_nu_min + fraction * log_nu_span);
+            Kokkos::pow(real(10.0), log_nu_min + fraction * log_nu_span);
     }
 
     for (std::size_t i = 0; i < n; ++i) {
@@ -122,7 +123,7 @@ inline ObservationProducts build_observation_products(const Photons& photons,
         const std::size_t pixel_y = bin_from_value(photons.phi_disp_host(i), -screen_half2, screen_span2, image_bins);
         const std::size_t time_bin = bin_from_value(photons.x0_host(i), t_min, t_span, lightcurve_bins);
         const std::size_t spectrum_bin = bin_from_value(
-            std::log10(std::max(real(1e-300), photons.frequency_host(i))),
+            Kokkos::log10(Kokkos::fmax(real(1e-300), photons.frequency_host(i))),
             log_nu_min, log_nu_span, spectrum_bins);
         accumulate_observation(products, photons, i, pixel_x, pixel_y, time_bin, spectrum_bin);
     }

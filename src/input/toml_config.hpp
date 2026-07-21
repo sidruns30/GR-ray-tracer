@@ -92,6 +92,9 @@ inline int get_int(const RawConfig& cfg, const std::string& key, int fallback) {
 inline size_t get_size_t(const RawConfig& cfg, const std::string& key, size_t fallback) {
     const auto it = cfg.find(key);
     if (it == cfg.end()) return fallback;
+    if (!it->second.empty() && it->second.front() == '-') {
+        throw std::runtime_error(key + " must not be negative");
+    }
     return static_cast<size_t>(std::stoull(it->second));
 }
 
@@ -122,12 +125,13 @@ inline void load_and_apply_toml_config(const std::string& path,
     if (M_BH <= 0.0) {
         throw std::runtime_error("black_hole.mass must be positive (got " + std::to_string(M_BH) + ")");
     }
-    if (std::abs(a_BH) > M_BH) {
+    if (Kokkos::abs(a_BH) > M_BH) {
         throw std::runtime_error("black_hole.spin must satisfy |spin| <= mass, i.e. dimensionless spin "
                                   "a/M in [-1, 1] (got spin=" + std::to_string(a_BH) +
                                   ", mass=" + std::to_string(M_BH) + "); |spin| > mass is a naked singularity.");
     }
-    R_HORIZON = M_BH + sqrt(std::max(real(0.0), M_BH * M_BH - a_BH * a_BH));
+    R_HORIZON = M_BH + Kokkos::sqrt(
+        Kokkos::fmax(real(0.0), M_BH * M_BH - a_BH * a_BH));
 
     use_pinhole_camera = get_bool(cfg, "camera.use_pinhole", use_pinhole_camera);
     camera_theta = get_real(cfg, "camera.theta", camera_theta);
@@ -187,6 +191,7 @@ inline void load_and_apply_toml_config(const std::string& path,
     termination_r_max = get_real(cfg, "termination.r_max", 1.5 * camera_distance);
 
     output_interval = get_size_t(cfg, "output.interval", output_interval);
+    output_stride = get_size_t(cfg, "output.stride", output_stride);
     output_variables = get_string(cfg, "output.variables", std::move(output_variables));
 
     if (nphotons <= 0 || nphotons > 1000000000) {
@@ -194,6 +199,7 @@ inline void load_and_apply_toml_config(const std::string& path,
     }
     if (max_steps <= 0) throw std::runtime_error("integration.max_steps must be positive");
     if (output_interval == 0) throw std::runtime_error("output.interval must be positive");
+    if (output_stride == 0) throw std::runtime_error("output.stride must be positive");
     if (termination_percent <= 0.0 || termination_percent > 1.0) {
         throw std::runtime_error("integration.termination_percent must be in (0, 1]");
     }

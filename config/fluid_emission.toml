@@ -13,10 +13,12 @@ use_image = false
 generator = "blackbody"
 superphotons_per_cell = 4
 energy_per_cell_erg = 1.0e30
-power_law_slope = 2.0
-nu_min_hz = 1.0e9
-nu_max_hz = 1.0e20
-custom_frequency_hz = 2.30e11
+# Power-law-only settings; uncomment when generator = "power-law".
+# power_law_slope = 2.0
+# nu_min_hz = 1.0e9
+# nu_max_hz = 1.0e20
+# Custom-generator example; uncomment when generator = "custom".
+# custom_frequency_hz = 2.30e11
 
 [units]
 length_cm_per_code = 1.0
@@ -38,4 +40,5 @@ rtol = 1.0e-8
 
 [output]
 interval = 10
+stride = 1
 variables = ["id", "frequency", "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3", "I", "terminate", "spectrum_frequency_hz", "spectrum_I"]
