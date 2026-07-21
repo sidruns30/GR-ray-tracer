@@ -12,6 +12,7 @@ namespace rk_detail {
 // pointer/array-decay output parameter worked correctly on the same
 // hardware. Pointers are the pattern already proven to work there.
 template <std::size_t N, typename RHS>
+KOKKOS_FUNCTION
 inline void rk4_step(real* state, real dt, const RHS& rhs) {
     real k1[N], k2[N], k3[N], k4[N], tmp[N];
     rhs(state, k1);
@@ -36,6 +37,7 @@ inline void rk4_step(real* state, real dt, const RHS& rhs) {
 // (even as a default-argument initializer) fails to compile for a GPU backend
 // with "identifier undefined in device code" -- see kerr_schild_core.hpp.
 template <std::size_t N, typename RHS>
+KOKKOS_FUNCTION
 inline void rk45_step(real* state, real* dt, bool* accepted, const RHS& rhs, const real* k1,
                       real atol, real rtol_, real min_step_scale, real max_step_scale, real safety_factor,
                       // Optional diagnostics: when non-null, the computed err/finite
@@ -78,14 +80,14 @@ inline void rk45_step(real* state, real* dt, bool* accepted, const RHS& rhs, con
         x5[i] = state[i] + dt_val * (b5_1 * k1[i] + b5_3 * k3[i] + b5_4 * k4[i] + b5_5 * k5[i] + b5_6 * k6[i]);
         // Mixed relative/absolute error norm -- position components (~1e4) and
         // momentum components (~1) no longer share one absolute tolerance.
-        const real scale_i = atol + rtol_ * std::max(std::abs(x5[i]), std::abs(x4[i]));
-        const real ratio = std::abs(x5[i] - x4[i]) / scale_i;
+        const real scale_i = atol + rtol_ * Kokkos::fmax(Kokkos::abs(x5[i]), Kokkos::abs(x4[i]));
+        const real ratio = Kokkos::abs(x5[i] - x4[i]) / scale_i;
         // std::max silently keeps the old `err` when compared against NaN (any
         // comparison with NaN is false), so a step landing on a coordinate/
         // curvature singularity (e.g. crossing r=0) could otherwise slip through
         // as "small error" and get accepted, permanently corrupting the state.
-        if (!std::isfinite(x5[i]) || !std::isfinite(ratio)) finite = false;
-        err = std::max(err, ratio);
+        if (!Kokkos::isfinite(x5[i]) || !Kokkos::isfinite(ratio)) finite = false;
+        err = Kokkos::fmax(err, ratio);
     }
 
     if (debug_err_out) *debug_err_out = err;
@@ -104,9 +106,9 @@ inline void rk45_step(real* state, real* dt, bool* accepted, const RHS& rhs, con
         return;
     }
 
-    real scale = safety_factor * std::pow(1.0 / err, 0.25);
-    scale = std::clamp(scale, min_step_scale, max_step_scale);
-    if (err < 1.0) {
+    real scale = safety_factor * Kokkos::pow(real(1.0) / err, real(0.25));
+    scale = Kokkos::fmin(max_step_scale, Kokkos::fmax(min_step_scale, scale));
+    if (err <= 1.0) {
         *accepted = true;
         *dt = dt_val * scale;
         for (std::size_t i = 0; i < N; ++i) state[i] = x5[i];
@@ -117,4 +119,3 @@ inline void rk45_step(real* state, real* dt, bool* accepted, const RHS& rhs, con
 }
 
 } // namespace rk_detail
-
