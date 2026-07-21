@@ -13,6 +13,9 @@
 */
 #pragma once
 #include <cstdio>
+#ifdef KOKKOS_ENABLE_CUDA
+#include <cuda_runtime.h>
+#endif
 #include "../utils.hpp"
 #include "../input/load_python_arrays.hpp"
 #include "../output/write_output.hpp"
@@ -420,6 +423,22 @@ inline void integrate_geodesics(
         Kokkos::RangePolicy<>(0, num_photons),
         step_functor
         );
+        // TEMPORARY: unconditional fence + explicit CUDA error check every step,
+        // to catch a silent CUDA runtime error (e.g. stack overflow / illegal
+        // access) that Release-mode Kokkos::fence() alone won't surface -- see
+        // the idx=0 trace in operator() vanishing mid-kernel with no output on
+        // an H200/Hopper90 run. Remove once root-caused (this defeats the
+        // batched fencing below and will be slow).
+#ifdef KOKKOS_ENABLE_CUDA
+        {
+            Kokkos::fence();
+            cudaError_t cuda_err = cudaGetLastError();
+            if (cuda_err != cudaSuccess) {
+                printf("[GPUDBG] CUDA ERROR after step %d parallel_for: %s (%s)\n",
+                       current_step, cudaGetErrorName(cuda_err), cudaGetErrorString(cuda_err));
+            }
+        }
+#endif
         timers.EndTimer("Geodesic Integration");
         // Siddhant: Can be converted to a pretty print function later
         if (current_step % output_interval == 0 || current_step == max_steps - 1) {
