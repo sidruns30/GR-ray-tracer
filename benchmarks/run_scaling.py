@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import shlex
 import statistics
 import subprocess
 import tempfile
 import time
 from pathlib import Path
+
+import numpy as np
 
 
 def parse_ranks(value: str) -> list[int]:
@@ -20,27 +23,34 @@ def parse_ranks(value: str) -> list[int]:
     return ranks
 
 
-def write_config(path: Path, photons: int, steps: int) -> None:
+def write_config(
+    path: Path, photons: int, steps: int, output_dir: Path,
+    numpy_dir: Path, integrator: str
+) -> None:
     path.write_text(
-        f"""[black_hole]
+        f"""[simulation]
+mode = "image"
+
+[input]
+vacuum = false
+numpy_dir = {json.dumps(str(numpy_dir))}
+
+[black_hole]
 mass = 1.0
 spin = 0.9
 
 [camera]
-use_pinhole = false
-use_image = true
 distance = 100.0
-plane_dim1 = 20.0
-plane_dim2 = 20.0
-plane_theta = 1.5707963267948966
-plane_phi = 0.0
+width = 20.0
+height = 20.0
+theta = 1.5707963267948966
+phi = 0.0
 
 [photons]
 count = {photons}
-camera_frequency_hz = 2.30e11
-camera_packet_energy_erg = 1.0
 
 [integration]
+integrator = {json.dumps(integrator)}
 max_steps = {steps}
 termination_percent = 1.0
 initial_step = 1e-4
@@ -52,30 +62,53 @@ r_min = 1.5
 r_max = 1000000.0
 
 [output]
+directory = {json.dumps(str(output_dir))}
 interval = {steps + 1}
 stride = 1
 variables = ["id"]
+image_nx = 1
+image_ny = 1
+spectrum_bins = 1
+
+[scattering]
+enabled = false
+optical_depth = 0.0
+albedo = 1.0
+seed = 12345
 """,
         encoding="utf-8",
     )
 
 
-def run_once(args: argparse.Namespace, ranks: int, photons: int, work_dir: Path) -> float:
+def create_scaling_grid(path: Path, nphi: int) -> None:
+    """Create a zero-density grid so timing rays run for the requested steps."""
+    path.mkdir(parents=True, exist_ok=True)
+    r_axis = np.array([10.0, 20.0])
+    theta_axis = np.array([0.5, 2.5])
+    phi_axis = np.linspace(0.0, 2.0 * np.pi, nphi, endpoint=False)
+    r, theta, phi = np.meshgrid(r_axis, theta_axis, phi_axis, indexing="ij")
+    shape = r.shape
+    velocity = np.zeros(shape + (4,))
+    velocity[..., 0] = 1.0
+    for name, values in {
+        "r.npy": r, "theta.npy": theta, "phi.npy": phi,
+        "rho.npy": np.zeros(shape), "Tgas.npy": np.ones(shape),
+        "vel.npy": velocity, "mag.npy": np.zeros(shape + (4,)),
+    }.items():
+        np.save(path / name, values)
+
+
+def run_once(args: argparse.Namespace, ranks: int, photons: int,
+             work_dir: Path, numpy_dir: Path) -> float:
     config = work_dir / f"config_{ranks}_{photons}.toml"
     output = work_dir / f"output_{ranks}_{photons}"
-    write_config(config, photons, args.steps)
+    write_config(config, photons, args.steps, output, numpy_dir, args.integrator)
     command = [
         *shlex.split(args.launcher),
         args.tasks_flag,
         str(ranks),
         str(args.executable),
-        "--config",
         str(config),
-        "--vacuum",
-        "--output-dir",
-        str(output),
-        "--integrator",
-        args.integrator,
     ]
     started = time.perf_counter()
     result = subprocess.run(command, text=True, capture_output=True, check=False)
@@ -113,12 +146,14 @@ def main() -> int:
     rows: list[dict[str, int | float | str]] = []
     with tempfile.TemporaryDirectory(prefix="grraytracer-scaling-") as temporary:
         work_dir = Path(temporary)
+        numpy_dir = work_dir / "grid"
+        create_scaling_grid(numpy_dir, max(args.ranks))
         for mode in modes:
             mode_rows = []
             for ranks in args.ranks:
                 total_photons = args.photons if mode == "strong" else args.photons * ranks
                 samples = [
-                    run_once(args, ranks, total_photons, work_dir)
+                    run_once(args, ranks, total_photons, work_dir, numpy_dir)
                     for _ in range(args.repeats)
                 ]
                 elapsed = statistics.median(samples)

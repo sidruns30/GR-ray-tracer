@@ -60,18 +60,33 @@ running across multiple nodes.
 
 ## Inputs
 
-The executable accepts one directory containing the NumPy grid coordinates and
-fields (see [Command-line flags](#command-line-flags)). It looks for `r.npy`,
+Set `input.numpy_dir` in the TOML file to the directory containing the NumPy
+grid coordinates and fields. The program looks for `r.npy`,
 `theta.npy`, `phi.npy`, `rho.npy`, `Tgas.npy`, `vel.npy`, and `mag.npy` in that
 directory and reports all missing files before initialization. The default
-directory is the current working directory. Scalar fields have shape
-`(nr, ntheta, nphi)`. Velocity and magnetic fields have shape
+directory is the current working directory. The three coordinate files and
+the scalar fluid fields all have shape `(nr, ntheta, nphi)`. Coordinate values
+may be nonuniform and may depend on all three logical indices. Velocity and
+magnetic fields have shape
 `(nr, ntheta, nphi, 4)` and contain contravariant spherical Kerr-Schild
-components ordered `(t, r, theta, phi)`. If a file isn't found there,
-generate placeholder grid data with `python3 src/create_example_data.py
---output-dir <dir>`, or pass `--vacuum` to skip grid/MHD data entirely and
-trace camera-created vacuum geodesics. `--vacuum` also forces scattering off, since
-scattering has no medium to scatter off of without a density grid.
+components ordered `(t, r, theta, phi)`. If a file is not found there,
+generate an example Fishbone-Moncrief torus with
+`python3 src/create_example_data.py --output-dir <dir>`. Both supported modes
+need this grid: image mode uses it as the emitting disk and disk mode emits
+packets from its cells. `input.vacuum=true` is therefore rejected.
+
+`src/create_example_data.py` has one public function,
+`create_fishbone_moncrief_torus`, which builds an analytic, hydrostatic
+constant-angular-momentum torus (Fishbone & Moncrief 1976) on a
+user-specified `(nr, ntheta, nphi)` grid. Its `--mass` and `--spin` must match
+`[black_hole]` in the simulation TOML that will consume the data, since the
+torus solution is computed in that spacetime. `--r-in` and `--r-pressure-max`
+set the torus inner edge and density-maximum radius; not every combination
+(together with spin) produces a torus with a closed outer edge -- the script
+prints a warning if the disk instead fills the grid out to `--r-max`. Cells
+outside the torus get a small floor density/temperature (`--rho-floor`) and a
+zero-angular-momentum-observer velocity, which stays a valid four-velocity
+at any radius outside the horizon (including inside the ergosphere).
 
 Scattering samples the nearest rank-local fluid cell and receives its CGS
 density, temperature, coordinate four-velocity, and fluid-frame magnetic
@@ -80,35 +95,69 @@ the run is in vacuum. The current grey model scatters elastically and
 isotropically in the fluid tetrad; its random draws come from a Kokkos random
 pool on both CPU and GPU backends.
 
-## Command-line flags
+Radiative transfer applies two further, independent effects at that same
+sampled fluid cell, once per integration step: optical-depth absorption,
+which only attenuates Stokes I/Q/U/V (multiplicatively, by `exp(-dtau)`), and
+emissivity, which only adds to Stokes I. Both are user-editable extension
+points -- `ComputeOpticalDepthIncrement` and `ComputeEmissivityIncrement` in
+[`src/radiative_transfer/radiative_transfer.hpp`](src/radiative_transfer/radiative_transfer.hpp)
+-- with default bodies implementing a simple grey, density-weighted opacity
+and a density*temperature-weighted emissivity, each scaled by a TOML-set
+coefficient. Replace either body to depend on `frequency_hz` or
+`fluid.magnetic_gauss` for a physical model (e.g. synchrotron), and see that
+file's header comment for the full contract. Enable with:
 
-| Flag | Default | Description |
+```toml
+[radiative_transfer]
+absorption_enabled = true
+emission_enabled = true
+absorption_coefficient = 1.0
+emission_coefficient = 1.0
+```
+
+## Program input
+
+The executable accepts exactly one argument: the simulation TOML file. Runtime
+flags are intentionally not supported, so every simulation setting is recorded
+in one reproducible configuration:
+
+```bash
+./build-cpu/src/gr-ray-trace config/example.toml
+```
+
+The following TOML keys replace the former runtime flags:
+
+| TOML key | Default | Description |
 | --- | --- | --- |
-| `--config <path>` | none | TOML file overriding black hole mass/spin, camera setup, photon count, termination radii, integration tolerances, and output cadence -- see [Simulation config](#simulation-config) |
-| `--vacuum` | off | Skip loading grid/MHD data entirely; forces `--scatter` off |
-| `--numpy-dir <path>` | `.` | Directory containing `r.npy`, `theta.npy`, `phi.npy`, `rho.npy`, `Tgas.npy`, `vel.npy`, and `mag.npy` |
-| `--output-dir <path>` | `./output` | Directory photon/observation output is written to |
-| `--output-variables <csv>` | see [Output](#output) | Comma-separated arrays to include; overrides `output.variables` from TOML |
-| `--scatter` | off | Enable photon scattering |
-| `--scatter-optical-depth <float>` | `0.0` | Optical depth used by the scattering model |
-| `--scatter-albedo <float>` | `1.0` | Scattering albedo (1.0 = fully scattering, 0.0 = fully absorbing) |
-| `--integrator <rk4\|rk45>` | `rk45` | Geodesic integrator: fixed-step RK4 or adaptive RK45 |
+| `simulation.mode` | `"image"` | Photon workflow: `"image"` or `"disk"` |
+| `input.vacuum` | `false` | Reserved; both current modes require `false` |
+| `input.numpy_dir` | `"."` | Directory containing the seven required NumPy arrays |
+| `integration.integrator` | `"rk45"` | Geodesic integrator: `"rk4"` or `"rk45"` |
+| `scattering.enabled` | `false` | Enable photon scattering when fluid data is available |
+| `scattering.optical_depth` | `0.0` | Non-negative optical depth used by the scattering model |
+| `scattering.albedo` | `1.0` | Scattering albedo in `[0, 1]` |
+| `scattering.seed` | `12345` | Random seed for reproducible scattering draws |
+| `radiative_transfer.absorption_enabled` | `false` | Enable optical-depth attenuation of Stokes I/Q/U/V |
+| `radiative_transfer.emission_enabled` | `false` | Enable emissivity additions to Stokes I |
+| `radiative_transfer.absorption_coefficient` | `0.0` | Non-negative scale factor for the default grey opacity |
+| `radiative_transfer.emission_coefficient` | `0.0` | Non-negative scale factor for the default grey emissivity |
+| `output.directory` | `"./output"` | Directory receiving photon and observation archives |
+| `output.variables` | see [Output](#output) | Arrays included in each output archive |
 
 ## Simulation config
 
 Black hole mass/spin, camera setup, photon count, run length, termination
-radii, integration tolerances, and output cadence are read from
-[`src/utils.hpp`](src/utils.hpp)'s built-in defaults unless overridden with a
-TOML file:
+radii, integration tolerances, scattering, input paths, and output behavior
+are configured by the required TOML file. Keys omitted from it retain the
+built-in defaults in [`src/utils.hpp`](src/utils.hpp):
 
 ```bash
-./build/src/gr-ray-trace --config config/example.toml
+./build/src/gr-ray-trace config/example.toml
 ```
 
 [`config/example.toml`](config/example.toml) documents every available key
-and includes documented starting values. Keys omitted from your file keep
-their default -- you only
-need to list what you're changing, e.g.:
+and includes documented starting values. You only need to list values that
+differ from their defaults, for example:
 
 ```toml
 [black_hole]
@@ -119,13 +168,42 @@ spin = 0.5
 count = 200
 ```
 
+### Image and disk modes
+
+The mode is explicit and mutually exclusive:
+
+```toml
+[simulation]
+mode = "image"  # or "disk"
+```
+
+In `image` mode, rays start across the finite image plane and are traced
+inward. A ray that reaches the first positive-density fluid cell is assigned
+an emitted spectrum in that fluid frame, then retraces toward the camera while
+radiative interactions are applied. Rays swallowed by the black hole, lost
+through the outer boundary, or missing the finite camera plane are rejected.
+Only packets that cross the camera plane contribute to the final image and
+spectrum.
+
+In `disk` mode there is no camera. Packets are generated throughout the loaded
+grid and transported forward. This mode writes packet checkpoints only; it
+does not create image, spectrum, or light-curve products.
+
+The removed pinhole camera and the former `camera.use_pinhole` /
+`camera.use_image` flags are not supported. Image geometry is configured with
+`camera.distance`, `camera.theta`, `camera.phi`, `camera.width`, and
+`camera.height`.
+
 ### Fluid-frame superphotons and code units
 
-Set both `camera.use_pinhole` and `camera.use_image` to `false` to generate
-superphotons throughout the loaded grid. In this mode `photons.count` is
+Set `simulation.mode = "disk"` to generate superphotons throughout the loaded
+grid. In this mode `photons.count` is
 ignored: every rank creates `photons.superphotons_per_cell` packets in each of
 its local cells. Packet IDs are globally unique unsigned integers, starting at
-zero, and runs are rejected before the ID space would exceed one billion.
+zero. Counts and IDs use 64 bits, and runs are rejected above 100 billion
+photons globally. Each rank retains a 32-bit local kernel index, so distribute
+large runs across enough MPI ranks that no rank receives more than roughly
+2.1 billion photons; GPU memory will normally impose a much lower local limit.
 
 Every packet has one frequency in Hz. The built-in blackbody generator samples
 the Planck energy distribution using the cell's physical temperature. The
@@ -178,6 +256,17 @@ decomposition = [1, 1, -1]
 For 16 ranks, `[2, 2, -1]` resolves to `[2, 2, 4]`. The resolved product must
 equal the rank count, and no axis may have more partitions than grid cells.
 
+After every integration step, active photons are assigned to the closest MPI
+grid domain from their Kerr-Schild `(r, theta, phi)` position. Complete photon
+records are grouped by destination and transferred with one `MPI_Alltoallv`,
+so a receiving GPU continues with the same ID, momentum, frequency, Stokes
+state, adaptive step, and image phase. This fixes the former behavior where a
+photon stayed on its launch rank and silently stopped seeing fluid after it
+crossed a domain boundary. Classification, counting, packing, and local
+compaction run in Kokkos on the active CPU/GPU backend. Only outgoing bundles
+are staged through host memory, and a step with no crossings skips full-state
+movement. This portable path does not require CUDA-aware MPI.
+
 Photons terminate once their Kerr-Schild radius leaves `[termination.r_min,
 termination.r_max]`, which default to the event horizon and `1.5 *
 camera.distance` respectively unless set explicitly.
@@ -185,20 +274,13 @@ camera.distance` respectively unless set explicitly.
 ## Runtime
 
 ```bash
-./build-cpu/src/gr-ray-trace \
-  --config config/example.toml \
-  --numpy-dir /path/to/numpy-fields \
-  --output-dir ./output \
-  --scatter \
-  --scatter-optical-depth 0.5 \
-  --scatter-albedo 0.9 \
-  --integrator rk45
+./build-cpu/src/gr-ray-trace config/example.toml
 ```
 
 Use MPI to run more than one rank, for example:
 
 ```bash
-mpirun -n 4 ./build-cpu/src/gr-ray-trace --config config/example.toml --vacuum
+mpirun -n 4 ./build-cpu/src/gr-ray-trace config/example.toml
 ```
 
 ## Output
@@ -213,28 +295,36 @@ Each archive contains named NumPy arrays. Select arrays in the TOML file:
 
 ```toml
 [output]
+directory = "./output"
 interval = 20
 stride = 4
-variables = ["id", "frequency", "x1", "x2", "x3", "k0", "I", "terminate", "image_I"]
+variables = ["id", "frequency", "x1", "x2", "x3", "k0", "I", "terminate", "phase"]
 ```
 
-`output.stride = N` writes rank-local photon indices `0, N, 2N, ...` while
-observation products continue to use all photons. The default stride is one.
+`output.stride = N` writes rank-local photon indices `0, N, 2N, ...`. The
+default stride is one. Because ownership changes, downstream tools must join
+rank files by `id`; keep `id` selected whenever trajectories are needed.
 
-The command line can override the TOML selection:
+For very large distributed runs, increase `output.stride` and select only the
+arrays needed for analysis. Each rank writes a classic non-ZIP64 NPZ archive,
+which must remain below 4 GB. The current writer also creates full host mirrors
+of selected arrays before applying the stride, so provision node RAM for those
+mirrors; for example, `id`, `frequency`, and `I` require approximately 24 bytes
+of host memory per rank-local photon.
 
-```bash
-./build-cpu/src/gr-ray-trace --vacuum \
-  --output-variables x0,x1,x2,x3,k0,k1,k2,k3,I,image_I
-```
+Available checkpoint arrays are `id`, `frequency` (Hz),
+`emission_frame_energy`, `x0`-`x3`, `k0`-`k3`,
+`I`, `Q`, `U`, `V`, `dlambda`, `terminate`, `phase`, `theta_disp`, and
+`phi_disp`. Use `all` to write every available array. Phase values are
+`0=disk`, `1=image backward`, `2=image forward`, `3=arrived`, and
+`4=rejected`.
 
-Available photon arrays are `id`, `frequency` (Hz), `x0`-`x3`, `k0`-`k3`, `I`, `Q`, `U`, `V`,
-`dlambda`, `terminate`, `theta_disp`, and `phi_disp`. Observation arrays are
-`image_I`, `image_Q`, `image_U`, `image_V`, `lightcurve_I`,
-`spectrum_frequency_hz`, and `spectrum_I`.
-Use `all` to write every available array. The default selection preserves the
-previous photon and observation content while consolidating it into one
-archive.
+At the end of image mode, rank zero also writes `image_products.npz`. It
+contains globally reduced `image_I`, `image_Q`, `image_U`, `image_V`,
+`spectrum_frequency_hz`, `spectrum_I`, and `arrived_count`. Its image and
+spectrum axes are controlled by `output.image_nx`, `output.image_ny`,
+`output.spectrum_bins`, `output.spectrum_min_hz`, and
+`output.spectrum_max_hz`. Disk mode never writes this file.
 
 Analyze completed output or watch checkpoints as they appear:
 
@@ -244,8 +334,8 @@ python3 src/analyze_output.py watch --output-dir ./output --mpi-size 4
 ```
 
 Trajectory and conservation analysis requires `x1`, `x2`, `x3`, and
-`k0`-`k3`. Observation plots are generated for whichever observation arrays
-are present.
+`k0`-`k3`. The analyzer plots final camera products when
+`image_products.npz` is present and otherwise treats the run as disk mode.
 
 ## Tests
 
@@ -263,7 +353,9 @@ ctest --test-dir build-cpu -L convergence --output-on-failure
 
 The scaling runner performs repeated strong- and weak-scaling runs, uses the
 median wall time, and writes throughput, speedup, and parallel efficiency to a
-CSV file. On a cluster using Open MPI:
+CSV file. It creates a temporary zero-density grid sized for the largest rank
+count, so the benchmark needs NumPy but no production input snapshot. On a
+cluster using Open MPI:
 
 ```bash
 python3 benchmarks/run_scaling.py \
