@@ -48,9 +48,7 @@ struct Timer
 class Timers
 {
     public:
-        Timers(std::size_t n_iterations,
-               std::size_t display_every) :
-               n_iterations(n_iterations),
+        Timers(std::size_t display_every) :
                display_every(display_every) {}
             
         bool TimerExists(const std::string& label) const
@@ -118,10 +116,6 @@ class Timers
                 << Colors::reset << "[time]: " << Colors::yellow <<
                 timer.total_time_elapsed * 1.e-9 << " seconds" << std::endl;
             }
-            const std::size_t remaining_iterations = n_iterations > completed_iterations
-                ? n_iterations - completed_iterations : 0;
-            const double estimated_remaining = total * static_cast<double>(remaining_iterations) /
-                                               static_cast<double>(completed_iterations);
             std::cout << Colors::red << "Time elapsed: " << Colors::red << total * 1.e-9 << " seconds" << Colors::red;
             std::cout << std::endl;
             return true;
@@ -135,7 +129,6 @@ class Timers
 
     private:
         std::vector<Timer> timers;
-        std::size_t n_iterations;
         std::size_t display_every;
 };
 

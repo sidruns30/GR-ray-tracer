@@ -112,7 +112,7 @@ int main(int argc, char* argv[]) {
     // Initialize Kokkos
     Kokkos::initialize();
     {
-        Timers timers(max_steps, output_interval);
+        Timers timers(output_interval);
         NumpyFieldViews fields; // Empty views are intentional when input.vacuum is true.
 
         if (!options.vacuum) {
