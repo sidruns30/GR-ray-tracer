@@ -26,7 +26,7 @@ height = 5.0               # image plane extent along phi_hat, in rg/c
 distance = 20.0          # camera distance from origin, in rg/c
 
 [photons]
-count = 20000                        # global total, up to 100 billion, split across MPI ranks
+count = 20000000                        # global total, up to 100 billion, split across MPI ranks
 # Disk mode emits packets in every cell. Image mode uses the same generator
 # when a backward ray first reaches an emitting fluid cell.
 generator = "blackbody"           # blackbody, power-law, or custom
