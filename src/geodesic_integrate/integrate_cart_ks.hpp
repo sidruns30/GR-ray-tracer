@@ -474,9 +474,15 @@ inline void integrate_geodesics(
         step_functor
         );
         timers.EndTimer("Geodesic Integration");
-        timers.BeginTimer("Photon Exchange");
-        exchange_photon_ownership(photons, domain_map, rank, mpi_size, a_BH);
-        timers.EndTimer("Photon Exchange");
+
+        if (mpi_size > 1) 
+        {
+            timers.BeginTimer("Photon Exchange");
+            exchange_photon_ownership(photons, domain_map, rank, mpi_size, a_BH);
+            timers.EndTimer("Photon Exchange");
+        }
+
+
         if (current_step % output_interval == 0 || current_step == max_steps - 1) {
             Kokkos::fence();
             timers.BeginTimer("Termination Count");
