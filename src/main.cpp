@@ -116,8 +116,8 @@ int main(int argc, char* argv[]) {
         NumpyFieldViews fields; // Empty views are intentional when input.vacuum is true.
 
         if (!options.vacuum) {
-            timers.AddTimer("Load HAMR Data");
-            timers.BeginTimer("Load HAMR Data");
+            timers.AddTimer("Load Numpy Data");
+            timers.BeginTimer("Load Numpy Data");
             try {
                 fields = load_numpy_field_bundle(
                     numpy_paths, decomposition_spec, mpi_rank, mpi_size);
@@ -129,7 +129,7 @@ int main(int argc, char* argv[]) {
                 MPI_Finalize();
                 return 1;
             }
-            timers.EndTimer("Load HAMR Data");
+            timers.EndTimer("Load Numpy Data");
 
             std::array<real, 3> global_coordinate_min{};
             std::array<real, 3> global_coordinate_max{};
