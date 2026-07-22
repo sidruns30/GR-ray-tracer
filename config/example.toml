@@ -13,7 +13,7 @@ name = "example"                  # output archives are named <name>_step_<step>
 # numpy_dir must contain r.npy, theta.npy, phi.npy, rho.npy, Tgas.npy, vel.npy, and mag.npy.
 # Coordinate and scalar files have shape (nr, ntheta, nphi); spacing may vary.
 vacuum = false
-numpy_dir = "output"
+numpy_dir = "numpy_data"
 
 [black_hole]
 mass = 1.0   # M_BH, geometric units

@@ -141,8 +141,6 @@ inline void load_and_apply_toml_config(const std::string& path,
     options.vacuum = get_bool(cfg, "input.vacuum", options.vacuum);
     options.enable_scattering = get_bool(
         cfg, "scattering.enabled", options.enable_scattering);
-    options.scattering_optical_depth = get_real(
-        cfg, "scattering.optical_depth", options.scattering_optical_depth);
     options.scattering_albedo = get_real(
         cfg, "scattering.albedo", options.scattering_albedo);
     options.scattering_seed = get_uint64(
@@ -255,10 +253,6 @@ inline void load_and_apply_toml_config(const std::string& path,
     }
     if (!(camera_distance > 0.0) || !(plane_dim1 > 0.0) || !(plane_dim2 > 0.0)) {
         throw std::runtime_error("camera distance, width, and height must be positive");
-    }
-    if (!Kokkos::isfinite(options.scattering_optical_depth) ||
-        options.scattering_optical_depth < 0.0) {
-        throw std::runtime_error("scattering.optical_depth must be finite and non-negative");
     }
     if (!Kokkos::isfinite(options.scattering_albedo) ||
         options.scattering_albedo < 0.0 || options.scattering_albedo > 1.0) {

@@ -247,7 +247,6 @@ int main(int argc, char* argv[]) {
             photon_generation,
             ScatteringModel{
                 options.enable_scattering,
-                options.scattering_optical_depth,
                 options.scattering_albedo,
                 options.scattering_seed
             },

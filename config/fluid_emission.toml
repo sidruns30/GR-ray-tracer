@@ -8,7 +8,7 @@ name = "fluid_emission"           # output archives are named <name>_step_<step>
 [input]
 vacuum = false
 # r.npy, theta.npy, and phi.npy are nonuniform-capable (nr, ntheta, nphi) arrays.
-numpy_dir = "."
+numpy_dir = "numpy_data"
 
 [black_hole]
 mass = 1.0

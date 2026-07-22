@@ -9,7 +9,6 @@
 
 struct ScatteringModel {
     bool enabled = false;
-    real optical_depth = 0.0;
     real albedo = 1.0;
     std::uint64_t seed = 0;
 };
@@ -271,7 +270,7 @@ bool maybe_scatter_photon(real state[8], real stokes[4], real& frequency_hz,
     // current grey model only requires the tetrad. Frequency-dependent models
     // can directly use density, temperature, velocity, magnetic field, and nu.
     (void)frequency_hz;
-    if (!model.enabled || !(model.optical_depth > 0.0)) return false;
+    if (!model.enabled) return false;
 
     // Thomson-scattering optical depth accumulated over this step. dx^mu/dlambda
     // is the photon's contravariant momentum (see compute_hamiltonian_rhs), so
@@ -280,8 +279,7 @@ bool maybe_scatter_photon(real state[8], real stokes[4], real& frequency_hz,
     // physical path length in cm.
     const real path_length_cm = photondlambda * length_scale;
     const real electron_number_density_cm3 = fluid.density_g_cm3 / proton_mass_cgs;
-    const real optical_depth_step = model.optical_depth *
-        sigma_thomson_cgs * electron_number_density_cm3 * path_length_cm;
+    const real optical_depth_step = sigma_thomson_cgs * electron_number_density_cm3 * path_length_cm;
 
     const real scatter_probability = 1.0 - Kokkos::exp(-optical_depth_step);
     if (random.drand() >= scatter_probability) return false;

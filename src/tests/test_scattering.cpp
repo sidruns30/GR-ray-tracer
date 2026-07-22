@@ -30,7 +30,7 @@ int main(int argc, char** argv) {
             r, theta, phi, density, temperature, velocity, magnetic,
             1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
             a_BH, M_BH, true};
-        ScatteringModel model{true, 1.0e6, 0.5, 42};
+        ScatteringModel model{true, 0.5, 42};
         ScatteringRandomPool random_pool(model.seed);
         const real spin = a_BH;
         const real mass = M_BH;
