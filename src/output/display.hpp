@@ -107,7 +107,7 @@ class Timers
                 total += timer.total_time_elapsed;
             }
             const std::size_t completed_iterations = current_iteration + 1;
-            std::cout << Colors::red << "Iteration: " << Colors::yellow <<
+            std::cout << Colors::red << "Iteration: " << Colors::red <<
             "[" << completed_iterations << "]" << Colors::reset << std::endl;
 
             for (auto& timer : timers)
@@ -122,7 +122,7 @@ class Timers
                 ? n_iterations - completed_iterations : 0;
             const double estimated_remaining = total * static_cast<double>(remaining_iterations) /
                                                static_cast<double>(completed_iterations);
-            std::cout << Colors::red << "Time elapsed: " << Colors::green << total * 1.e-9 << " seconds" << Colors::red;
+            std::cout << Colors::red << "Time elapsed: " << Colors::red << total * 1.e-9 << " seconds" << Colors::red;
             std::cout << std::endl;
             return true;
         }
