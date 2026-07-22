@@ -72,7 +72,7 @@ inline void rk45_step(real* state, real* dt, bool* accepted, const RHS& rhs, con
         // momentum components (~1) no longer share one absolute tolerance.
         const real scale_i = atol + rtol_ * Kokkos::fmax(Kokkos::abs(x5[i]), Kokkos::abs(x4[i]));
         const real ratio = Kokkos::abs(x5[i] - x4[i]) / scale_i;
-        // A conventional maximum silently keeps the old `err` when compared against NaN (any
+        // std::max silently keeps the old `err` when compared against NaN (any
         // comparison with NaN is false), so a step landing on a coordinate/
         // curvature singularity (e.g. crossing r=0) could otherwise slip through
         // as "small error" and get accepted, permanently corrupting the state.

@@ -458,7 +458,8 @@ inline void integrate_geodesics(
     int mpi_size = 1;
     MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
     PhotonDomainMap domain_map(fields, mpi_size);
-    timers.AddTimer({"Geodesic Integration", "Photon Exchange", "Termination Count", "Output"});
+    if (mpi_size > 1)   {timers.AddTimer({"Geodesic Integration", "Photon Exchange", "Termination Count", "Output"});}
+    else                {timers.AddTimer({"Geodesic Integration", "Termination Count", "Output"});}
     for (int current_step = 0; current_step < max_steps; ++current_step)
     {
         timers.BeginTimer("Geodesic Integration");
