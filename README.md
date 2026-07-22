@@ -130,6 +130,7 @@ The following TOML keys replace the former runtime flags:
 | TOML key | Default | Description |
 | --- | --- | --- |
 | `simulation.mode` | `"image"` | Photon workflow: `"image"` or `"disk"` |
+| `simulation.name` | `"output"` | Prefix for output archive filenames |
 | `input.vacuum` | `false` | Reserved; both current modes require `false` |
 | `input.numpy_dir` | `"."` | Directory containing the seven required NumPy arrays |
 | `integration.integrator` | `"rk45"` | Geodesic integrator: `"rk4"` or `"rk45"` |
@@ -175,6 +176,7 @@ The mode is explicit and mutually exclusive:
 ```toml
 [simulation]
 mode = "image"  # or "disk"
+name = "my-run" # prefixes output archive filenames; default "output"
 ```
 
 In `image` mode, rays start across the finite image plane and are traced
@@ -285,10 +287,11 @@ mpirun -n 4 ./build-cpu/src/gr-ray-trace config/example.toml
 
 ## Output
 
-Every checkpoint produces exactly one file per MPI rank:
+Every checkpoint produces exactly one file per MPI rank, prefixed with
+`simulation.name` (default `"output"`):
 
 ```text
-output_step_<step>_rank<rank>.npz
+<simulation.name>_step_<step>_rank<rank>.npz
 ```
 
 Each archive contains named NumPy arrays. Select arrays in the TOML file:
@@ -319,7 +322,8 @@ Available checkpoint arrays are `id`, `frequency` (Hz),
 `0=disk`, `1=image backward`, `2=image forward`, `3=arrived`, and
 `4=rejected`.
 
-At the end of image mode, rank zero also writes `image_products.npz`. It
+At the end of image mode, rank zero also writes
+`<simulation.name>_image_products.npz`. It
 contains globally reduced `image_I`, `image_Q`, `image_U`, `image_V`,
 `spectrum_frequency_hz`, `spectrum_I`, and `arrived_count`. Its image and
 spectrum axes are controlled by `output.image_nx`, `output.image_ny`,
@@ -334,8 +338,10 @@ python3 src/analyze_output.py watch --output-dir ./output --mpi-size 4
 ```
 
 Trajectory and conservation analysis requires `x1`, `x2`, `x3`, and
-`k0`-`k3`. The analyzer plots final camera products when
-`image_products.npz` is present and otherwise treats the run as disk mode.
+`k0`-`k3`. The analyzer auto-detects `simulation.name` from the archives found
+(or pass `--sim-name` explicitly), and plots final camera products when
+`<simulation.name>_image_products.npz` is present, otherwise treating the run
+as disk mode.
 
 ## Tests
 

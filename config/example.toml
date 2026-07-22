@@ -6,24 +6,25 @@
 
 [simulation]
 mode = "image"                    # image or disk
+name = "example"                  # output archives are named <name>_step_<step>_rank<rank>.npz
 
 [input]
 # Both image and disk modes require the fluid/disk grid.
 # numpy_dir must contain r.npy, theta.npy, phi.npy, rho.npy, Tgas.npy, vel.npy, and mag.npy.
 # Coordinate and scalar files have shape (nr, ntheta, nphi); spacing may vary.
 vacuum = false
-numpy_dir = "."
+numpy_dir = "output"
 
 [black_hole]
 mass = 1.0   # M_BH, geometric units
-spin = 1.0   # a_BH; must satisfy |spin| <= mass, i.e. dimensionless spin a/M in [-1, 1] (|a/M| == 1 is extremal)
+spin = 0.9375   # a_BH; must satisfy |spin| <= mass, i.e. dimensionless spin a/M in [-1, 1] (|a/M| == 1 is extremal)
 
 [camera]
 theta = 0.7853981633974483  # camera polar angle
 phi = 0.7853981633974483    # camera azimuthal angle
-width = 20.0                # image plane extent along theta_hat, in rg/c
-height = 20.0               # image plane extent along phi_hat, in rg/c
-distance = 10000.0          # camera distance from origin, in rg/c
+width = 5.0                # image plane extent along theta_hat, in rg/c
+height = 5.0               # image plane extent along phi_hat, in rg/c
+distance = 100.0          # camera distance from origin, in rg/c
 
 [photons]
 count = 20                        # global total, up to 100 billion, split across MPI ranks
@@ -45,7 +46,7 @@ energy_per_cell_erg = 1.0
 length_cm_per_code = 1.0
 time_s_per_code = 1.0
 density_g_cm3_per_code = 1.0
-temperature_k_per_code = 1.0e10
+temperature_k_per_code = 5.0e5
 four_velocity_cm_s_per_code = 2.99792458e10
 magnetic_gauss_per_code = 1.0
 

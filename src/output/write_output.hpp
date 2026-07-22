@@ -93,7 +93,7 @@ inline void write_output_step(Photons& photons,
                               const OutputSelection& selection) {
     photons.copy_to_host(selection);
     const std::filesystem::path path = std::filesystem::path(output_directory) /
-        ("output_step_" + std::to_string(step) + "_rank" + std::to_string(rank) + ".npz");
+        (simulation_name + "_step_" + std::to_string(step) + "_rank" + std::to_string(rank) + ".npz");
     publish_archive(path, [&](cnpy::NpzWriter& archive) {
         const std::size_t photon_count = photons.x0.extent(0);
         for (const std::string& name : selection.names()) {
@@ -128,7 +128,7 @@ inline void write_image_products(Photons& photons, int rank,
     if (rank != 0) return;
 
     const std::filesystem::path path =
-        std::filesystem::path(output_directory) / "image_products.npz";
+        std::filesystem::path(output_directory) / (simulation_name + "_image_products.npz");
     publish_archive(path, [&](cnpy::NpzWriter& archive) {
         archive.add("image_I", global.image_I.data(), {global.image_ny, global.image_nx});
         archive.add("image_Q", global.image_Q.data(), {global.image_ny, global.image_nx});

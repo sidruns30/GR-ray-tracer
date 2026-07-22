@@ -4,16 +4,17 @@ Analyze GR-ray-tracer photon output: post-hoc plots, plus a live terminal
 monitor (photon stats + an in-terminal x-y density histogram) that can run
 alongside the C++ binary while it is still writing output.
 
-Each rank writes one `output_step_<step>_rank<rank>.npz` archive per checkpoint.
-The archive contains the fields selected by `output.variables` in the TOML
-configuration's `output.variables` setting.
+Each rank writes one `<simulation.name>_step_<step>_rank<rank>.npz` archive per
+checkpoint (the prefix comes from `simulation.name` in the TOML config, and
+defaults to "output"). The archive contains the fields selected by
+`output.variables` in the TOML configuration's `output.variables` setting.
 
 Because packets migrate between MPI domains, rank-local ordering is not stable.
 When `id` is present this script sorts the joined rank output by the globally
 unique packet ID before comparing checkpoints.
 
-Image mode additionally writes one globally reduced `image_products.npz` at
-the end of the run. It contains Stokes images and a spectrum using fixed axes.
+Image mode additionally writes one globally reduced `<simulation.name>_image_products.npz`
+at the end of the run. It contains Stokes images and a spectrum using fixed axes.
 Disk mode intentionally produces no camera products.
 
 Usage:
@@ -26,8 +27,36 @@ import shutil
 import sys
 import time
 from pathlib import Path
-
+import matplotlib as mpl
 import numpy as np
+
+mpl.rcParams.update({
+    "font.family":      "serif",
+    "font.size":         11,
+    "axes.labelsize":    13,
+    "axes.titlesize":    13,
+    "legend.fontsize":   10,
+    "xtick.labelsize":   10,
+    "ytick.labelsize":   10,
+    "xtick.direction":   "in",
+    "ytick.direction":   "in",
+    "xtick.top":         True,
+    "ytick.right":       True,
+    "xtick.minor.visible": True,
+    "ytick.minor.visible": True,
+    "axes.linewidth":    1.0,
+    "lines.linewidth":   1.8,
+    "figure.dpi":        150,
+    "savefig.dpi":       300,
+    "savefig.bbox":      "tight",
+    "mathtext.fontset":  "cm",
+    # set ytick size minor and major
+    "ytick.major.size": 10,
+    "ytick.minor.size": 3,
+    "xtick.major.size": 10,
+    "xtick.minor.size": 3,
+})
+
 
 # Kerr-Schild parameters -- must match src/utils.hpp (M_BH, a_BH). Override
 # with --mass/--spin if utils.hpp has since changed.
@@ -43,33 +72,41 @@ PHOTON_FIELDS = [
     "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3",
     "I", "Q", "U", "V", "dlambda", "terminate", "phase", "theta_disp", "phi_disp",
 ]
-OUTPUT_RE = re.compile(r"output_step_(\d+)_rank(\d+)\.npz$")
+OUTPUT_RE = re.compile(r"^(?P<name>.+)_step_(?P<step>\d+)_rank(?P<rank>\d+)\.npz$")
 
 
 # ---------------------------------------------------------------------------
 # Discovery / loading
 # ---------------------------------------------------------------------------
-def discover_output_steps(output_dir: Path):
-    """Return {step: set(ranks)} for complete, atomically published archives."""
+def discover_output_steps(output_dir: Path, sim_name=None):
+    """Return (sim_name, {step: set(ranks)}) for complete, atomically published
+    archives. sim_name comes from the TOML config's `simulation.name`; when not
+    given explicitly it's auto-detected from whatever archives are found."""
     steps = {}
-    for path in output_dir.glob("output_step_*_rank*.npz"):
+    detected_name = sim_name
+    pattern = f"{sim_name}_step_*_rank*.npz" if sim_name else "*_step_*_rank*.npz"
+    for path in output_dir.glob(pattern):
         m = OUTPUT_RE.match(path.name)
         if not m:
             continue
-        step, rank = int(m.group(1)), int(m.group(2))
+        if detected_name is None:
+            detected_name = m.group("name")
+        elif m.group("name") != detected_name:
+            continue
+        step, rank = int(m.group("step")), int(m.group("rank"))
         steps.setdefault(step, set()).add(rank)
-    return steps
+    return detected_name, steps
 
 
-def archive_path(output_dir: Path, step: int, rank: int):
-    return output_dir / f"output_step_{step}_rank{rank}.npz"
+def archive_path(output_dir: Path, sim_name: str, step: int, rank: int):
+    return output_dir / f"{sim_name}_step_{step}_rank{rank}.npz"
 
 
-def load_photon_step(output_dir: Path, step: int, ranks):
+def load_photon_step(output_dir: Path, sim_name: str, step: int, ranks):
     """Concatenate photon arrays available on every requested rank."""
     rank_data = []
     for rank in sorted(ranks):
-        with np.load(archive_path(output_dir, step, rank)) as archive:
+        with np.load(archive_path(output_dir, sim_name, step, rank)) as archive:
             rank_data.append({name: archive[name] for name in archive.files if name in PHOTON_FIELDS})
     common_fields = set.intersection(*(set(data) for data in rank_data)) if rank_data else set()
     combined = {
@@ -202,9 +239,9 @@ def cmd_post(args):
     plots_dir = Path(args.plots_dir) if args.plots_dir else output_dir / "analysis_plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    photon_steps = discover_output_steps(output_dir)
+    sim_name, photon_steps = discover_output_steps(output_dir, args.sim_name)
     if not photon_steps:
-        sys.exit(f"No output_step_*_rank*.npz files found under {output_dir}")
+        sys.exit(f"No *_step_*_rank*.npz files found under {output_dir}")
 
     steps_sorted = sorted(photon_steps)
     rh = r_horizon(args.mass, args.spin)
@@ -218,7 +255,7 @@ def cmd_post(args):
     prev_state = None
     for step in steps_sorted:
         ranks = photon_steps[step]
-        state = load_photon_step(output_dir, step, ranks)
+        state = load_photon_step(output_dir, sim_name, step, ranks)
         required = {"x1", "x2", "x3", "k0", "k1", "k2", "k3"}
         if not required <= state.keys():
             missing = ", ".join(sorted(required - state.keys()))
@@ -293,7 +330,7 @@ def cmd_post(args):
     plt.close(fig)
 
     # Image-mode products are already reduced over MPI by the executable.
-    product_path = output_dir / "image_products.npz"
+    product_path = output_dir / f"{sim_name}_image_products.npz"
     if product_path.exists():
         with np.load(product_path) as products:
             image_fields = [name for name in ("image_I", "image_Q", "image_U", "image_V")
@@ -327,7 +364,7 @@ def cmd_post(args):
                 fig.savefig(plots_dir / "spectrum.png", dpi=150)
                 plt.close(fig)
     else:
-        print("No image_products.npz found; treating this as disk mode.")
+        print(f"No {product_path.name} found; treating this as disk mode.")
 
     print(f"\nPlots written to {plots_dir}")
 
@@ -356,10 +393,12 @@ def cmd_watch(args):
     known_ranks = set()
     prev_state = None
     last_render_lines = 0
+    sim_name = args.sim_name
 
     try:
         while True:
-            steps = discover_output_steps(output_dir)
+            detected_name, steps = discover_output_steps(output_dir, sim_name)
+            sim_name = sim_name or detected_name
             for step in sorted(s for s in steps if s not in seen_steps):
                 ranks_for_step = steps[step]
                 known_ranks |= set(ranks_for_step)
@@ -369,7 +408,7 @@ def cmd_watch(args):
                     continue  # rank(s) haven't finished writing this step yet
 
                 try:
-                    state = load_photon_step(output_dir, step, expected_ranks)
+                    state = load_photon_step(output_dir, sim_name, step, expected_ranks)
                 except (OSError, ValueError):
                     continue
 
@@ -416,6 +455,8 @@ def main():
 
     p_post = sub.add_parser("post", help="Post-hoc analysis: terminal stats table + saved plots")
     p_post.add_argument("--output-dir", **common)
+    p_post.add_argument("--sim-name", default=None,
+                         help="simulation.name prefix of the archives (default: auto-detect)")
     p_post.add_argument("--plots-dir", default=None, help="Where to save plots (default: <output-dir>/analysis_plots)")
     p_post.add_argument("--mass", type=float, default=DEFAULT_M_BH)
     p_post.add_argument("--spin", type=float, default=DEFAULT_A_BH)
@@ -428,6 +469,8 @@ def main():
 
     p_watch = sub.add_parser("watch", help="Live terminal monitor while the simulation runs")
     p_watch.add_argument("--output-dir", **common)
+    p_watch.add_argument("--sim-name", default=None,
+                          help="simulation.name prefix of the archives (default: auto-detect)")
     p_watch.add_argument("--mass", type=float, default=DEFAULT_M_BH)
     p_watch.add_argument("--spin", type=float, default=DEFAULT_A_BH)
     p_watch.add_argument("--mpi-size", type=int, default=None,

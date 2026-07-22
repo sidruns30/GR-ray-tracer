@@ -6,6 +6,7 @@
 
 [simulation]
 mode = "disk"                    # image or disk
+name = "fm-torus-image"           # output archives are named <name>_step_<step>_rank<rank>.npz
 
 [input]
 # Both image and disk modes require the fluid/disk grid.
@@ -26,11 +27,11 @@ height = 5.0               # image plane extent along phi_hat, in rg/c
 distance = 20.0          # camera distance from origin, in rg/c
 
 [photons]
-count = 20000000                        # global total, up to 100 billion, split across MPI ranks
+count = 2000000                        # global total, up to 100 billion, split across MPI ranks
 # Disk mode emits packets in every cell. Image mode uses the same generator
 # when a backward ray first reaches an emitting fluid cell.
 generator = "blackbody"           # blackbody, power-law, or custom
-superphotons_per_cell = 4
+superphotons_per_cell = 1
 energy_per_cell_erg = 1.0
 # Power-law-only settings; uncomment when generator = "power-law".
 # power_law_slope = 2.0           # dE/dnu proportional to nu^(-slope)
@@ -42,12 +43,12 @@ energy_per_cell_erg = 1.0
 [units]
 # Multiply each NumPy value by its factor before photon generation. For example,
 # Tgas=1 in the input means 1e10 K with the temperature factor below.
-length_cm_per_code = 1.0
-time_s_per_code = 1.0
-density_g_cm3_per_code = 1.0
+length_cm_per_code = 1.2e12
+time_s_per_code = 40.0
+density_g_cm3_per_code = 1.e-9
 temperature_k_per_code = 1.0e10
 four_velocity_cm_s_per_code = 2.99792458e10
-magnetic_gauss_per_code = 1.0
+magnetic_gauss_per_code = 100.0
 
 [parallel]
 # Number of partitions in [r, theta, phi]. One -1 is inferred from the MPI
@@ -57,10 +58,10 @@ decomposition = [1, 1, 1]
 [integration]
 integrator = "rk45"          # rk4 or rk45
 max_steps = 10000
-termination_percent = 0.9     # stop once this fraction of photons has terminated
+termination_percent = 0.99     # stop once this fraction of photons has terminated
 initial_step = 0.005            # initial dlambda guess (scaled by camera_distance)
-atol = 1e-10
-rtol = 1e-10
+atol = 1e-8
+rtol = 1e-8
 
 [termination]
 # Photons terminate once their Kerr-Schild radius leaves [r_min, r_max].
@@ -82,8 +83,8 @@ spectrum_min_hz = 1.0e8
 spectrum_max_hz = 1.0e22
 
 [scattering]
-enabled = false
-optical_depth = 0.0
+enabled = true
+optical_depth = 1.0
 albedo = 1.0                  # 1.0 scatters; 0.0 absorbs
 seed = 12345
 

@@ -136,6 +136,7 @@ inline void load_and_apply_toml_config(const std::string& path,
 
     options.mode = parse_simulation_mode(
         get_string(cfg, "simulation.mode", "image"));
+    simulation_name = get_string(cfg, "simulation.name", simulation_name);
     options.numpy_dir = get_string(cfg, "input.numpy_dir", std::move(options.numpy_dir));
     options.vacuum = get_bool(cfg, "input.vacuum", options.vacuum);
     options.enable_scattering = get_bool(
@@ -243,6 +244,7 @@ inline void load_and_apply_toml_config(const std::string& path,
     if (output_stride == 0) throw std::runtime_error("output.stride must be positive");
     if (options.numpy_dir.empty()) throw std::runtime_error("input.numpy_dir must not be empty");
     if (options.output_dir.empty()) throw std::runtime_error("output.directory must not be empty");
+    if (simulation_name.empty()) throw std::runtime_error("simulation.name must not be empty");
     if (options.image_nx == 0 || options.image_ny == 0 || options.spectrum_bins == 0) {
         throw std::runtime_error("output image dimensions and spectrum_bins must be positive");
     }

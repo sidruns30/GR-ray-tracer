@@ -53,6 +53,7 @@ int main() {
         std::ofstream stream(config);
         stream << "[simulation]\n"
                << "mode = \"disk\"\n"
+               << "name = \"my-run\"\n"
                << "[input]\n"
                << "vacuum = true\n"
                << "numpy_dir = \"/data/snapshot\"\n"
@@ -78,6 +79,7 @@ int main() {
         config.string(), options, output_variables, photon_generation, units, decomposition);
     passed = passed && options.vacuum;
     passed = passed && options.mode == SimulationMode::Disk;
+    passed = passed && simulation_name == "my-run";
     passed = passed && options.numpy_dir == "/data/snapshot";
     passed = passed && options.output_dir == "/tmp/grraytracer-output";
     passed = passed && options.enable_scattering;

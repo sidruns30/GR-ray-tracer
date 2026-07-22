@@ -183,3 +183,4 @@ inline constexpr real max_scale = 10.0;
 extern size_t output_interval;
 extern size_t output_stride;
 inline std::string output_directory = "./output";
+inline std::string simulation_name = "output";

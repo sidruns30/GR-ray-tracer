@@ -3,6 +3,7 @@
 
 [simulation]
 mode = "disk"
+name = "fluid_emission"           # output archives are named <name>_step_<step>_rank<rank>.npz
 
 [input]
 vacuum = false
