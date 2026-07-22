@@ -369,6 +369,7 @@ struct Geodesic_cartesian_kerr_schild {
                 auto random = scattering_random_pool.get_state();
                 maybe_scatter_photon(
                     state, stokes, photon_frequency(idx), scattering_model,
+                    Kokkos::abs(photon_dlambda(idx)), scattering_fluid.length_scale,
                     fluid, tetrad, a_BH, M_BH, random);
                 scattering_random_pool.free_state(random);
             }

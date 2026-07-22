@@ -251,10 +251,18 @@ bool sample_scattering_fluid(const real state[8], const ScatteringFluidGrid& gri
     return true;
 }
 
+// Free-electron mass, used to turn a mass density into the number density
+// Thomson scattering depends on. Assumes fully ionized hydrogen (mu_e = 1),
+// so n_e = rho / m_p.
+inline constexpr real proton_mass_cgs = 1.67262192369e-24; // g
+inline constexpr real sigma_thomson_cgs = 6.6524587158e-25; // cm^2
+
 template <typename RandomGenerator>
 KOKKOS_INLINE_FUNCTION
 bool maybe_scatter_photon(real state[8], real stokes[4], real& frequency_hz,
                           const ScatteringModel& model,
+                          const real photondlambda,
+                          const real length_scale,
                           const FluidCellCGS& fluid,
                           const real tetrad[4][4],
                           real spin, real mass,
@@ -262,11 +270,20 @@ bool maybe_scatter_photon(real state[8], real stokes[4], real& frequency_hz,
     // The fluid state is deliberately part of this interface even though the
     // current grey model only requires the tetrad. Frequency-dependent models
     // can directly use density, temperature, velocity, magnetic field, and nu.
-    (void)fluid;
     (void)frequency_hz;
     if (!model.enabled || !(model.optical_depth > 0.0)) return false;
 
-    const real scatter_probability = 1.0 - Kokkos::exp(-model.optical_depth);
+    // Thomson-scattering optical depth accumulated over this step. dx^mu/dlambda
+    // is the photon's contravariant momentum (see compute_hamiltonian_rhs), so
+    // photondlambda carries the same code-length units as state[IX..IZ] and
+    // needs the same length_scale used for fluid.position_cm to become a
+    // physical path length in cm.
+    const real path_length_cm = photondlambda * length_scale;
+    const real electron_number_density_cm3 = fluid.density_g_cm3 / proton_mass_cgs;
+    const real optical_depth_step = model.optical_depth *
+        sigma_thomson_cgs * electron_number_density_cm3 * path_length_cm;
+
+    const real scatter_probability = 1.0 - Kokkos::exp(-optical_depth_step);
     if (random.drand() >= scatter_probability) return false;
 
     // Preserve the photon's energy measured by the local fluid observer, so

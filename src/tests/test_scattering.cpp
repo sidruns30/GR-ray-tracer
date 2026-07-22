@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
                 real local_frequency = frequency(0);
                 scattered = maybe_scatter_photon(
                     local_state, local_stokes, local_frequency, model,
-                    fluid, tetrad, spin, mass, random);
+                    1.0, grid.length_scale, fluid, tetrad, spin, mass, random);
                 frequency(0) = local_frequency;
                 random_pool.free_state(random);
             }
