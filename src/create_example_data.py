@@ -19,8 +19,36 @@ are converted back explicitly (see the comments below the metric block).
 
 import argparse
 from pathlib import Path
-
+import matplotlib.pyplot as plt
+import matplotlib as mpl
 import numpy as np
+
+mpl.rcParams.update({
+    "font.family":      "serif",
+    "font.size":         11,
+    "axes.labelsize":    13,
+    "axes.titlesize":    13,
+    "legend.fontsize":   10,
+    "xtick.labelsize":   10,
+    "ytick.labelsize":   10,
+    "xtick.direction":   "in",
+    "ytick.direction":   "in",
+    "xtick.top":         True,
+    "ytick.right":       True,
+    "xtick.minor.visible": True,
+    "ytick.minor.visible": True,
+    "axes.linewidth":    1.0,
+    "lines.linewidth":   1.8,
+    "figure.dpi":        150,
+    "savefig.dpi":       300,
+    "savefig.bbox":      "tight",
+    "mathtext.fontset":  "cm",
+    # set ytick size minor and major
+    "ytick.major.size": 10,
+    "ytick.minor.size": 3,
+    "xtick.major.size": 10,
+    "xtick.minor.size": 3,
+})
 
 
 def _keplerian_specific_angular_momentum(r_hat, spin_hat):
@@ -77,13 +105,14 @@ def create_fishbone_moncrief_torus(
     ntheta=64,
     nphi=32,
     r_min=None,
-    r_max=1000.0,
+    r_max=50.0,
     mass=1.0,
     spin=0.9375,
     r_in=6.0,
     r_pressure_max=10.0,
     gamma=4.0 / 3.0,
     rho_floor=1.0e-6,
+    plot=False
 ):
     """Create the (nr, ntheta, nphi) coordinate and fluid arrays for a
     Fishbone-Moncrief torus, in the format the C++ loader expects.
@@ -221,7 +250,35 @@ def create_fishbone_moncrief_torus(
         path = output / name
         np.save(path, array.astype(np.float64, copy=False))
         print(f"Created {path} with shape {array.shape}")
-
+    if plot:
+        x_2d = radius[:, :, 0] * np.sin(polar_angle[:, :, 0]) * np.cos(azimuth[:, :, 0])
+        z_2d = radius[:, :, 0] * np.cos(polar_angle[:, :, 0])
+        density_2d = density[:, :, 0]
+        temperature_2d = temperature[:, :, 0]
+        u_phi_2d = u_upper_phi[:, :, 0] / mass
+        # Plot the torus density, velocity and temperature in r-theta plane at phi=0
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        titles = [r"$\rho$", r"$u^\phi$", r"$T$"]
+        xlabels = [r"$x$", r"$x$", r"$x$"]
+        ylabels = [r"$z$", r"$z$", r"$z$"]
+        cmaps = ["viridis", "plasma", "inferno"]
+        norms = [mpl.colors.LogNorm(vmin=density_2d.min(), vmax=density_2d.max()),
+                 mpl.colors.Normalize(vmin=u_phi_2d.min(), vmax=u_phi_2d.max()),
+                 mpl.colors.LogNorm(vmin=temperature_2d.min(), vmax=temperature_2d.max())]
+        data = [density_2d, u_phi_2d, temperature_2d]
+        for ax, title, xlabel, ylabel, cmap, norm, d in zip(axes, titles, xlabels, ylabels, cmaps, norms, data):
+            im = ax.pcolormesh(x_2d, z_2d, d, shading="auto", cmap=cmap, norm=norm)
+            ax.set_title(title)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+            fig.colorbar(im, ax=ax)
+            ax.set_facecolor("#B3B2B2")
+            if ax != axes[0]:
+                ax.set_ylabel("")
+                ax.set_yticklabels([])
+        plt.tight_layout()
+        plt.subplots_adjust(wspace=0.1)
+        plt.show()
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -231,7 +288,7 @@ def main():
     parser.add_argument("--nphi", type=int, default=32)
     parser.add_argument("--r-min", type=float, default=None,
                         help="defaults to just outside the horizon")
-    parser.add_argument("--r-max", type=float, default=1000.0)
+    parser.add_argument("--r-max", type=float, default=50.0)
     parser.add_argument("--mass", type=float, default=1.0,
                         help="must match [black_hole].mass in the simulation TOML")
     parser.add_argument("--spin", type=float, default=0.9375,
@@ -244,11 +301,13 @@ def main():
                         help="adiabatic index")
     parser.add_argument("--rho-floor", type=float, default=1.0e-6,
                         help="dimensionless atmosphere density/temperature")
+    parser.add_argument("--plot", type=bool, default=True,
+                        help="plot the generated torus")
     args = parser.parse_args()
     create_fishbone_moncrief_torus(
         args.output_dir, args.nr, args.ntheta, args.nphi,
         args.r_min, args.r_max, args.mass, args.spin,
-        args.r_in, args.r_pressure_max, args.gamma, args.rho_floor)
+        args.r_in, args.r_pressure_max, args.gamma, args.rho_floor, args.plot)
 
 
 if __name__ == "__main__":
