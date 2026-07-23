@@ -8,6 +8,77 @@
 #include "../metrics/cartesian_kerr_schild.hpp"
 #include "../metrics/kerr_schild_core.hpp"
 #include "fluid_frame.hpp"
+
+// Extension point: number of superphotons emitted from a grid cell, as a function of the
+// cell's fluid density in code units (i.e. rho=1 means one unit of density before any
+// [units] conversion) and the configured normalization. Replace this body to weight
+// superphoton generation by a different quantity (e.g. emissivity, optical depth).
+KOKKOS_INLINE_FUNCTION
+int ComputeSuperphotonsPerCell(real density_code_units, real normalization) {
+    return static_cast<int>(density_code_units * normalization);
+}
+
+struct SuperphotonCellOffsets {
+    // Flattened (row-major over [r, theta, phi]) prefix sum of per-cell superphoton
+    // counts, size ncells + 1; offsets(cell)..offsets(cell+1) is the photon-index
+    // range emitted from that cell.
+    Kokkos::View<std::uint64_t*> offsets;
+    std::uint64_t total_photons = 0;
+};
+
+// Builds the rank-local per-cell superphoton offsets from the density grid so that
+// initialize_photons_disk can assign a variable number of packets per cell while still
+// mapping a flat photon index onto a specific cell.
+inline SuperphotonCellOffsets build_superphoton_cell_offsets(
+    const Kokkos::View<real***>& density,
+    const real normalization)
+{
+    const std::size_t nr = density.extent(0);
+    const std::size_t ntheta = density.extent(1);
+    const std::size_t nphi = density.extent(2);
+    const std::size_t ncells = nr * ntheta * nphi;
+
+    auto density_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), density);
+
+    SuperphotonCellOffsets result;
+    result.offsets = Kokkos::View<std::uint64_t*>("superphoton_cell_offsets", ncells + 1);
+    auto offsets_host = Kokkos::create_mirror_view(result.offsets);
+
+    std::uint64_t running_total = 0;
+    for (std::size_t i = 0; i < nr; ++i) {
+        for (std::size_t j = 0; j < ntheta; ++j) {
+            for (std::size_t k = 0; k < nphi; ++k) {
+                const std::size_t cell = (i * ntheta + j) * nphi + k;
+                offsets_host(cell) = running_total;
+                const int count = ComputeSuperphotonsPerCell(density_host(i, j, k), normalization);
+                running_total += static_cast<std::uint64_t>(count > 0 ? count : 0);
+            }
+        }
+    }
+    offsets_host(ncells) = running_total;
+    Kokkos::deep_copy(result.offsets, offsets_host);
+    result.total_photons = running_total;
+    return result;
+}
+
+// Finds the cell containing a flat photon index via binary search over the prefix-sum
+// offsets, i.e. the largest `cell` such that offsets(cell) <= photon_index.
+KOKKOS_INLINE_FUNCTION
+std::size_t locate_superphoton_cell(
+    const Kokkos::View<std::uint64_t*>& cell_offsets, std::uint64_t photon_index) {
+    std::size_t low = 0;
+    std::size_t high = cell_offsets.extent(0) - 1;
+    while (low + 1 < high) {
+        const std::size_t mid = low + (high - low) / 2;
+        if (cell_offsets(mid) <= photon_index) {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    return low;
+}
+
 inline void initialize_photons_image(
     const int photons_per_process,
     const real camera_distance,
@@ -112,11 +183,11 @@ inline void initialize_photons_disk(
     const Kokkos::View<real****>& magnetic,
     const PhotonGenerationConfig& generation,
     const UnitConversions& units,
+    const Kokkos::View<std::uint64_t*>& cell_offsets,
     Photons &photons)
 {
     const std::size_t ntheta_local = r.extent(1);
     const std::size_t nphi_local = r.extent(2);
-    const int packets_per_cell = generation.superphotons_per_cell;
     const PhotonGeneratorType generator_type = generation.generator;
     const real energy_per_cell = generation.energy_per_cell_erg;
     const real power_law_slope = generation.power_law_slope;
@@ -139,7 +210,10 @@ inline void initialize_photons_disk(
         Kokkos::RangePolicy<>(0, photons_per_process),
         KOKKOS_LAMBDA(int i) {
             auto rand_gen = rand_pool.get_state();
-            const std::size_t cell = static_cast<std::size_t>(i / packets_per_cell);
+            const std::size_t cell = locate_superphoton_cell(
+                cell_offsets, static_cast<std::uint64_t>(i));
+            const int packets_per_cell = static_cast<int>(
+                cell_offsets(cell + 1) - cell_offsets(cell));
             const std::size_t cell_i = cell / (ntheta_local * nphi_local);
             const std::size_t remainder = cell % (ntheta_local * nphi_local);
             const std::size_t cell_j = remainder / nphi_local;

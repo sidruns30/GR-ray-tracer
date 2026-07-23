@@ -199,13 +199,19 @@ The removed pinhole camera and the former `camera.use_pinhole` /
 ### Fluid-frame superphotons and code units
 
 Set `simulation.mode = "disk"` to generate superphotons throughout the loaded
-grid. In this mode `photons.count` is
-ignored: every rank creates `photons.superphotons_per_cell` packets in each of
-its local cells. Packet IDs are globally unique unsigned integers, starting at
-zero. Counts and IDs use 64 bits, and runs are rejected above 100 billion
-photons globally. Each rank retains a 32-bit local kernel index, so distribute
-large runs across enough MPI ranks that no rank receives more than roughly
-2.1 billion photons; GPU memory will normally impose a much lower local limit.
+grid. In this mode `photons.count` is ignored: every rank creates
+`int(density_code_units * photons.superphoton_count_normalization)` packets in
+each of its local cells, where `density_code_units` is the raw NumPy density
+value before the `[units]` conversion below -- so denser cells emit more
+packets (see `ComputeSuperphotonsPerCell` in
+`src/radiative_transfer/initialize_photons.hpp`, which is a replaceable
+extension point). At startup the expected global superphoton count from this
+formula is printed to the terminal. Packet IDs are globally unique unsigned
+integers, starting at zero. Counts and IDs use 64 bits, and runs are rejected
+above 100 billion photons globally. Each rank retains a 32-bit local kernel
+index, so distribute large runs across enough MPI ranks that no rank receives
+more than roughly 2.1 billion photons; GPU memory will normally impose a much
+lower local limit.
 
 Every packet has one frequency in Hz. The built-in blackbody generator samples
 the Planck energy distribution using the cell's physical temperature. The
@@ -231,7 +237,7 @@ magnetic_gauss_per_code = 1.0e4
 
 [photons]
 generator = "blackbody"
-superphotons_per_cell = 16
+superphoton_count_normalization = 16.0  # ~16 packets/cell at rho=1 (code units)
 energy_per_cell_erg = 1.0e30
 ```
 

@@ -16,7 +16,11 @@ spin = 0.9
 
 [photons]
 generator = "blackbody"
-superphotons_per_cell = 4
+# Disk-mode superphoton count per cell defaults to int(density_code_units * this
+# factor); see ComputeSuperphotonsPerCell in
+# src/radiative_transfer/initialize_photons.hpp. This gives ~4 packets/cell at
+# rho=1 (code units).
+superphoton_count_normalization = 4.0
 energy_per_cell_erg = 1.0e30
 # Power-law-only settings; uncomment when generator = "power-law".
 # power_law_slope = 2.0

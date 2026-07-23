@@ -185,8 +185,9 @@ inline void load_and_apply_toml_config(const std::string& path,
     nphotons = get_uint64(cfg, "photons.count", nphotons);
     photon_generation.generator = parse_photon_generator_type(
         get_string(cfg, "photons.generator", "blackbody"));
-    photon_generation.superphotons_per_cell = get_int(
-        cfg, "photons.superphotons_per_cell", photon_generation.superphotons_per_cell);
+    photon_generation.superphoton_count_normalization = get_real(
+        cfg, "photons.superphoton_count_normalization",
+        photon_generation.superphoton_count_normalization);
     photon_generation.energy_per_cell_erg = get_real(
         cfg, "photons.energy_per_cell_erg", photon_generation.energy_per_cell_erg);
     photon_generation.power_law_slope = get_real(

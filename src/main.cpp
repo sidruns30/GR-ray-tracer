@@ -159,15 +159,17 @@ int main(int argc, char* argv[]) {
         }
 
         std::uint64_t local_photon_count = 0;
+        Kokkos::View<std::uint64_t*> disk_cell_offsets;
         if (options.mode == SimulationMode::Image) {
             const auto rank_count = static_cast<std::uint64_t>(mpi_size);
             const auto rank = static_cast<std::uint64_t>(mpi_rank);
             local_photon_count = nphotons / rank_count +
                 (rank < nphotons % rank_count ? 1ULL : 0ULL);
         } else {
-            local_photon_count = static_cast<std::uint64_t>(fields.r.extent(0)) *
-                fields.r.extent(1) * fields.r.extent(2) *
-                static_cast<std::uint64_t>(photon_generation.superphotons_per_cell);
+            const SuperphotonCellOffsets disk_offsets = build_superphoton_cell_offsets(
+                fields.density, photon_generation.superphoton_count_normalization);
+            disk_cell_offsets = disk_offsets.offsets;
+            local_photon_count = disk_offsets.total_photons;
         }
 
         std::uint64_t global_photon_count = 0;
@@ -191,7 +193,10 @@ int main(int argc, char* argv[]) {
         }
         nphotons = global_photon_count;
         if (mpi_rank == 0) {
-            INFO("Global superphoton count: " + std::to_string(global_photon_count), Colors::cyan);
+            const std::string count_label = options.mode == SimulationMode::Image
+                ? "Global superphoton count: "
+                : "Expected global superphoton count (from density normalization): ";
+            INFO(count_label + std::to_string(global_photon_count), Colors::cyan);
         }
         std::uint64_t global_id_offset = 0;
         MPI_Exscan(&local_photon_count, &global_id_offset, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
@@ -227,6 +232,7 @@ int main(int argc, char* argv[]) {
                 fields.density, fields.temperature, fields.velocity, fields.magnetic,
                 photon_generation,
                 units,
+                disk_cell_offsets,
                 photons
                 );
             timers.EndTimer("Initialize Disk Photons");

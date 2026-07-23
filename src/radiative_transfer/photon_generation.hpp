@@ -39,7 +39,10 @@ struct UnitConversions {
 
 struct PhotonGenerationConfig {
     PhotonGeneratorType generator = PhotonGeneratorType::Blackbody;
-    int superphotons_per_cell = 1;
+    // Number of superphotons emitted per grid cell defaults to
+    // int(fluid_density_g_cm3 * superphoton_count_normalization); see
+    // ComputeSuperphotonsPerCell in initialize_photons.hpp.
+    real superphoton_count_normalization = 1.0;
     real energy_per_cell_erg = 1.0;
     real power_law_slope = 2.0;
     real nu_min_hz = 1.0e9;
@@ -47,8 +50,10 @@ struct PhotonGenerationConfig {
     real custom_frequency_hz = 2.30e11;
 
     void validate() const {
-        if (superphotons_per_cell <= 0) {
-            throw std::runtime_error("photons.superphotons_per_cell must be positive");
+        if (!(superphoton_count_normalization > 0.0) ||
+            !Kokkos::isfinite(superphoton_count_normalization)) {
+            throw std::runtime_error(
+                "photons.superphoton_count_normalization must be finite and positive");
         }
         if (!(energy_per_cell_erg >= 0.0) || !Kokkos::isfinite(energy_per_cell_erg)) {
             throw std::runtime_error("photons.energy_per_cell_erg must be finite and non-negative");

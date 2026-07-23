@@ -5,8 +5,8 @@
 # a physical temperature scale, so edit the conversion factors for your data.
 
 [simulation]
-mode = "image"                    # image or disk
-name = "fm-torus-image"           # output archives are named <name>_step_<step>_rank<rank>.npz
+mode = "disk"                    # image or disk
+name = "fm-torus-disk-opt-thin"           # output archives are named <name>_step_<step>_rank<rank>.npz
 
 [input]
 # Both image and disk modes require the fluid/disk grid.
@@ -31,7 +31,10 @@ count = 2000000                        # global total, up to 100 billion, split 
 # Disk mode emits packets in every cell. Image mode uses the same generator
 # when a backward ray first reaches an emitting fluid cell.
 generator = "blackbody"           # blackbody, power-law, or custom
-superphotons_per_cell = 1
+# Disk-mode superphoton count per cell defaults to int(density_code_units * this
+# factor); see ComputeSuperphotonsPerCell in
+# src/radiative_transfer/initialize_photons.hpp. 
+superphoton_count_normalization = 100.0
 energy_per_cell_erg = 1.0
 # Power-law-only settings; uncomment when generator = "power-law".
 # power_law_slope = 2.0           # dE/dnu proportional to nu^(-slope)
@@ -45,7 +48,7 @@ energy_per_cell_erg = 1.0
 # Tgas=1 in the input means 1e10 K with the temperature factor below.
 length_cm_per_code = 1.2e12
 time_s_per_code = 40.0
-density_g_cm3_per_code = 1.e-9
+density_g_cm3_per_code = 1.e-15
 temperature_k_per_code = 1.0e10
 four_velocity_cm_s_per_code = 2.99792458e10
 magnetic_gauss_per_code = 100.0
@@ -59,9 +62,9 @@ decomposition = [1, 1, 1]
 integrator = "rk45"          # rk4 or rk45
 max_steps = 10000
 termination_percent = 0.99     # stop once this fraction of photons has terminated
-initial_step = 0.005            # initial dlambda guess (scaled by camera_distance)
-atol = 1e-8
-rtol = 1e-8
+initial_step = 0.2            # initial dlambda guess (scaled by camera_distance)
+atol = 1e-9
+rtol = 1e-9
 
 [termination]
 # Photons terminate once their Kerr-Schild radius leaves [r_min, r_max].
@@ -72,7 +75,7 @@ r_max = 10.0
 [output]
 directory = "./output"
 interval = 1                  # write one archive per rank every N steps
-stride = 10                    # write every Nth rank-local photon
+stride = 100                    # write every Nth rank-local photon
 # Arrays included in each rank-local checkpoint. Image mode separately writes
 # a globally reduced image_products.npz after integration.
 variables = ["id", "frequency", "x0", "x1", "x2", "x3", "k0", "k1", "k2", "k3", "I", "Q", "U", "V", "terminate", "phase"]

@@ -33,14 +33,20 @@ int main(int argc, char** argv) {
         units.temperature_k_per_code = 1.0e10;
         PhotonGenerationConfig generation;
         generation.generator = PhotonGeneratorType::Blackbody;
-        generation.superphotons_per_cell = packets_per_cell;
+        // density = 2.0 (code units) * normalization = 32.0 -> int(64.0) ==
+        // packets_per_cell superphotons from the single cell.
+        generation.superphoton_count_normalization = 32.0;
         generation.energy_per_cell_erg = 8.0;
+
+        const auto cell_offsets = build_superphoton_cell_offsets(
+            density, generation.superphoton_count_normalization);
+        passed = passed && cell_offsets.total_photons == static_cast<std::uint64_t>(packets_per_cell);
 
         Photons photons(packets_per_cell);
         constexpr std::uint64_t large_id_offset = 50000000000ULL;
         initialize_photons_disk(
             packets_per_cell, 0, large_id_offset, r, theta, phi, density, temperature,
-            velocity, magnetic, generation, units, photons);
+            velocity, magnetic, generation, units, cell_offsets.offsets, photons);
         Kokkos::fence();
 
         auto ids = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, photons.id);
@@ -83,7 +89,7 @@ int main(int argc, char** argv) {
         generation.power_law_slope = 2.5;
         initialize_photons_disk(
             packets_per_cell, 0, 1000, r, theta, phi, density, temperature,
-            velocity, magnetic, generation, units, photons);
+            velocity, magnetic, generation, units, cell_offsets.offsets, photons);
         Kokkos::fence();
         frequencies = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, photons.frequency);
         for (int i = 0; i < packets_per_cell; ++i) {

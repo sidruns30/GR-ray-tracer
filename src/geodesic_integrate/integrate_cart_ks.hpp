@@ -6,6 +6,7 @@
 #include "../metrics/kerr_schild_core.hpp"
 #include "../radiative_transfer/scattering.hpp"
 #include "../radiative_transfer/radiative_transfer.hpp"
+#include "../radiative_transfer/initialize_photons.hpp"
 #include "../input/load_python_arrays.hpp"
 #include "../mpi/photon_exchange.hpp"
 #include "../simulation_options.hpp"
@@ -325,19 +326,22 @@ struct Geodesic_cartesian_kerr_schild {
             real emitted_frequency = 0.0;
             real emitted_energy = 0.0;
             bool generated = false;
-            if (photon_generation.generator == PhotonGeneratorType::Blackbody) {
+            const real density_code_units = fluid.density_g_cm3 / scattering_fluid.density_scale;
+            const int packets_per_cell = ComputeSuperphotonsPerCell(
+                density_code_units, photon_generation.superphoton_count_normalization);
+            if (packets_per_cell > 0 && photon_generation.generator == PhotonGeneratorType::Blackbody) {
                 generated = GenerateBlackbody(
-                    fluid, random, photon_generation.superphotons_per_cell,
+                    fluid, random, packets_per_cell,
                     photon_generation.energy_per_cell_erg, emitted_frequency, emitted_energy);
-            } else if (photon_generation.generator == PhotonGeneratorType::PowerLaw) {
+            } else if (packets_per_cell > 0 && photon_generation.generator == PhotonGeneratorType::PowerLaw) {
                 generated = GeneratePowerLaw(
-                    fluid, random, photon_generation.superphotons_per_cell,
+                    fluid, random, packets_per_cell,
                     photon_generation.power_law_slope, photon_generation.nu_min_hz,
                     photon_generation.nu_max_hz, photon_generation.energy_per_cell_erg,
                     emitted_frequency, emitted_energy);
-            } else {
+            } else if (packets_per_cell > 0) {
                 generated = GeneratePhotonsCustom(
-                    fluid, random, photon_generation.superphotons_per_cell,
+                    fluid, random, packets_per_cell,
                     photon_generation.custom_frequency_hz,
                     photon_generation.energy_per_cell_erg, emitted_frequency, emitted_energy);
             }
